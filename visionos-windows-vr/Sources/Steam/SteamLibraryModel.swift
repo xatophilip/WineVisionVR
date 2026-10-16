@@ -23,11 +23,25 @@ final class SteamLibraryModel: ObservableObject {
     @Published private(set) var progress: [Int: SteamDownloadProgress] = [:]
     @Published private(set) var activeDownloads: Set<Int> = []
     @Published private(set) var pausedDownloads: Set<Int> = []
+    /// Waiting app IDs in the order selected; the single active install is separate.
+    @Published private(set) var queuedDownloads: [Int] = []
     @Published private(set) var downloadErrors: [Int: String] = [:]
     @Published private(set) var isPreparingValveClient = false
     @Published private(set) var valveClientPreparationStatus: String?
     /// Set by the app while a Wine/runtime launch or accepted session is active.
-    @Published var runtimeBusy = false
+    @Published var runtimeBusy = false {
+        didSet {
+            guard runtimeBusy != oldValue else { return }
+            if runtimeBusy {
+                Task { @MainActor in
+                    guard self.runtimeBusy, !self.sessionReservedForLaunch else { return }
+                    await self.prepareForLaunch()
+                }
+            } else if !sessionReservedForLaunch {
+                resumeAfterLaunchFailure()
+            }
+        }
+    }
     @Published var error: String?
 
     /// The app launcher receives a validated installed record after the CM
@@ -38,8 +52,60 @@ final class SteamLibraryModel: ObservableObject {
     private lazy var fetcher = SteamLibraryFetcher(session: session)
     private lazy var downloader = DepotDownloader(session: session)
     private var downloadTasks: [Int: Task<Void, Never>] = [:]
+    private var downloadTokens: [Int: UUID] = [:]
     private var sessionReservedForLaunch = false
     private var accountGeneration = 0
+    private var suspendingDownloads = 0
+    private var resumeWhenDownloadsStop = false
+    private var reloadLibraryWhenIdle = false
+    private var queueAccount: String?
+    private var repairDownloads: Set<Int> = []
+
+    private struct SavedDownloadQueue: Codable {
+        let pending: [Int]
+        let paused: [Int]
+        let repairs: [Int]
+    }
+
+    private static func queueKey(_ account: String) -> String {
+        let normalized = account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "SteamLibrary.downloadQueue.v1." + Data(normalized.utf8).base64EncodedString()
+    }
+
+    private func persistDownloadQueue() {
+        guard let account = queueAccount else { return }
+        // Only app IDs are saved. Authentication stays in Steam's Keychain store.
+        let active = activeDownloads.sorted().filter { !pausedDownloads.contains($0) }
+        let pending = (active + queuedDownloads).reduce(into: [Int]()) { result, id in
+            if !result.contains(id) { result.append(id) }
+        }
+        let saved = SavedDownloadQueue(pending: pending, paused: pausedDownloads.sorted(), repairs: repairDownloads.sorted())
+        if let data = try? JSONEncoder().encode(saved) {
+            UserDefaults.standard.set(data, forKey: Self.queueKey(account))
+        }
+    }
+
+    private func restoreDownloadQueue(account: String) {
+        guard queueAccount != account else { return }
+        queueAccount = account
+        let owned = Set(games.map(\.id))
+        guard let data = UserDefaults.standard.data(forKey: Self.queueKey(account)),
+              let saved = try? JSONDecoder().decode(SavedDownloadQueue.self, from: data) else {
+            persistDownloadQueue()
+            return
+        }
+        pausedDownloads = Set(saved.paused).intersection(owned)
+        repairDownloads = Set(saved.repairs).intersection(owned)
+        queuedDownloads = saved.pending.reduce(into: [Int]()) { result, id in
+            guard id > 0, owned.contains(id), !pausedDownloads.contains(id), !result.contains(id) else { return }
+            // A process may have closed after writing the complete appmanifest.
+            // Explicit update/repair requests must still run for installed games.
+            let partial = DepotDownloader.hasPartialDownload(appID: UInt32(id), steamApps: SteamInstallPaths.steamApps(drive: MadeiraDock.drive))
+            if !installedIDs.contains(id) || partial || repairDownloads.contains(id) { result.append(id) }
+        }
+        repairDownloads.formIntersection(Set(queuedDownloads).union(pausedDownloads))
+        persistDownloadQueue()
+    }
     private var signInObserver: NSObjectProtocol?
 
     private init() {
@@ -63,81 +129,153 @@ final class SteamLibraryModel: ObservableObject {
     }
 
     private func signInStateChanged() async {
+        persistDownloadQueue()
         accountGeneration &+= 1
+        let generation = accountGeneration
         signedIn = SteamSignIn.isSignedIn
         accountName = SteamSignIn.accountName
+        await stopConnectionAndDownloads()
+        guard generation == accountGeneration else { return }
+        clearAccountDownloadState()
+        // Depot keys and owned-depot licenses belong to the old account.
+        fetcher = SteamLibraryFetcher(session: session)
+        downloader = DepotDownloader(session: session)
         if signedIn {
+            session.resume()
             await connectAndLoad()
-        } else {
-            await stopConnectionAndDownloads()
-            games = []
-            installedIDs = []
-            progress = [:]
-            activeDownloads = []
-            pausedDownloads = []
-            downloadErrors = [:]
         }
     }
 
+    private func clearAccountDownloadState() {
+        queueAccount = nil
+        games = []
+        installedIDs = []
+        progress = [:]
+        activeDownloads = []
+        pausedDownloads = []
+        queuedDownloads = []
+        repairDownloads = []
+        downloadErrors = [:]
+        if isPreparingValveClient && !runtimeBusy { sessionReservedForLaunch = false }
+        isPreparingValveClient = false
+        valveClientPreparationStatus = nil
+    }
+
     private func connectAndLoad() async {
-        guard !sessionReservedForLaunch, !runtimeBusy else { return }
-        guard !isLoadingLibrary else { return }
+        guard !sessionReservedForLaunch, !runtimeBusy, suspendingDownloads == 0 else { return }
+        guard !isLoadingLibrary else {
+            reloadLibraryWhenIdle = true
+            return
+        }
         isLoadingLibrary = true
-        defer { isLoadingLibrary = false }
+        defer {
+            isLoadingLibrary = false
+            if reloadLibraryWhenIdle {
+                reloadLibraryWhenIdle = false
+                Task { await connectAndLoad() }
+            } else {
+                startNextDownload()
+            }
+        }
         let generation = accountGeneration
+        let libraryFetcher = fetcher
         let account = SteamSignIn.accountName
         guard signedIn, account != nil else { return }
         do {
             try await session.connectAndLogin()
-            let result = try await fetcher.fetchOwnedApps()
+            guard generation == accountGeneration, signedIn, account == SteamSignIn.accountName,
+                  !runtimeBusy, !sessionReservedForLaunch else { return }
+            let result = try await libraryFetcher.fetchOwnedApps()
             guard generation == accountGeneration, signedIn,
                   account == SteamSignIn.accountName, !sessionReservedForLaunch else { return }
             games = result.map { SteamLibraryEntry(game: SteamOwnedGame($0)) }
                 .sorted { $0.game.name.localizedCaseInsensitiveCompare($1.game.name) == .orderedAscending }
             refreshInstalled()
+            restoreDownloadQueue(account: account!)
             error = nil
         } catch {
             if generation == accountGeneration, signedIn { self.error = SteamSignIn.message(error) }
         }
     }
 
+    /// Adds another owned game to the FIFO, including while a game is running.
     func download(_ entry: SteamLibraryEntry) {
-        guard signedIn, !runtimeBusy, !sessionReservedForLaunch, downloadTasks[entry.id] == nil else { return }
-        guard downloadTasks.isEmpty else {
-            error = "Pause or finish the current download before starting another."
-            return
-        }
+        guard signedIn, queueAccount == SteamSignIn.accountName,
+              games.contains(where: { $0.id == entry.id }), !queuedDownloads.contains(entry.id),
+              !activeDownloads.contains(entry.id) || pausedDownloads.contains(entry.id) else { return }
         let appID = entry.id
         downloadErrors.removeValue(forKey: appID)
-        error = nil
-        activeDownloads.insert(appID)
         pausedDownloads.remove(appID)
+        if installedIDs.contains(appID) { repairDownloads.insert(appID) }
+        queuedDownloads.append(appID)
+        persistDownloadQueue()
+        error = nil
+        startNextDownload()
+    }
+
+    func removeQueued(_ id: Int) {
+        queuedDownloads.removeAll { $0 == id }
+        repairDownloads.remove(id)
+        persistDownloadQueue()
+    }
+
+    private func startNextDownload() {
+        guard signedIn, !runtimeBusy, !sessionReservedForLaunch,
+              !isPreparingValveClient, !isLoadingLibrary, suspendingDownloads == 0,
+              downloadTasks.isEmpty, let appID = queuedDownloads.first else { return }
+        queuedDownloads.removeFirst()
+        activeDownloads.insert(appID)
+        persistDownloadQueue()
+        let generation = accountGeneration
+        let token = UUID()
+        downloadTokens[appID] = token
         let task = Task { @MainActor in
             do {
+                try Task.checkCancellation()
                 try await session.ensureConnected()
+                try Task.checkCancellation()
+                guard generation == accountGeneration else { throw CancellationError() }
                 guard let app = try await fetcher.fetchInstallInfo(appID: UInt32(appID)) else {
                     throw SteamError.depotNotFound(UInt32(appID))
                 }
+                try Task.checkCancellation()
+                guard generation == accountGeneration else { throw CancellationError() }
                 let ownedDepots = try await fetcher.ownedDepotIDs()
+                try Task.checkCancellation()
+                guard generation == accountGeneration else { throw CancellationError() }
                 _ = try await downloader.install(app, steamApps: SteamInstallPaths.steamApps(drive: MadeiraDock.drive),
                     ownedDepots: { ownedDepots }) { [weak self] value in
-                        Task { @MainActor in self?.progress[appID] = value }
+                        Task { @MainActor in
+                            guard let self, generation == self.accountGeneration,
+                                  self.downloadTokens[appID] == token, self.downloadTasks[appID]?.isCancelled == false,
+                                  self.activeDownloads.contains(appID), !self.pausedDownloads.contains(appID) else { return }
+                            self.progress[appID] = value
+                        }
                     }
+                guard generation == accountGeneration else { return }
                 refreshInstalled()
                 error = nil
+                queuedDownloads.removeAll { $0 == appID }
+                repairDownloads.remove(appID)
             } catch is CancellationError {
-                if pausedDownloads.contains(appID) { pausedDownloads.insert(appID) }
+                // Explicit pauses stay paused; launch suspension already requeued its active ID.
             } catch {
-                let message = SteamSignIn.message(error)
-                downloadErrors[appID] = message
-                self.error = message
+                guard generation == accountGeneration else { return }
+                if !Task.isCancelled {
+                    let message = SteamSignIn.message(error)
+                    downloadErrors[appID] = message
+                    self.error = message
+                }
             }
+            guard generation == accountGeneration, downloadTokens[appID] == token else { return }
             activeDownloads.remove(appID)
-            if !pausedDownloads.contains(appID) { pausedDownloads.remove(appID) }
             if downloadErrors[appID] == nil && !pausedDownloads.contains(appID) {
                 progress.removeValue(forKey: appID)
             }
             downloadTasks.removeValue(forKey: appID)
+            downloadTokens.removeValue(forKey: appID)
+            persistDownloadQueue()
+            startNextDownload()
         }
         downloadTasks[appID] = task
     }
@@ -145,49 +283,60 @@ final class SteamLibraryModel: ObservableObject {
     func pause(_ id: Int) {
         guard let task = downloadTasks[id] else { return }
         pausedDownloads.insert(id)
+        queuedDownloads.removeAll { $0 == id }
+        persistDownloadQueue()
         task.cancel()
     }
 
     func resume(_ entry: SteamLibraryEntry) { download(entry) }
+
+    private func requeueActiveDownloads() {
+        let interrupted = activeDownloads.sorted().filter { !pausedDownloads.contains($0) }
+        queuedDownloads = interrupted + queuedDownloads.filter { !interrupted.contains($0) }
+        persistDownloadQueue()
+    }
 
     func prepareValveClient() async {
         guard !isPreparingValveClient, !runtimeBusy else { return }
         let preserveLaunchReservation = sessionReservedForLaunch
         isPreparingValveClient = true
         sessionReservedForLaunch = true
-        defer { isPreparingValveClient = false }
         let generation = accountGeneration
-        let restartIDs = activeDownloads
-        for id in restartIDs { pausedDownloads.insert(id) }
-        let tasks = Array(downloadTasks.values)
-        tasks.forEach { $0.cancel() }
-        for task in tasks { await task.value }
-        downloadTasks.removeAll()
+        defer {
+            if generation == accountGeneration {
+                isPreparingValveClient = false
+                startNextDownload()
+            }
+        }
+        requeueActiveDownloads()
+        await stopConnectionAndDownloads()
+        guard generation == accountGeneration else { return }
 
         // The prefix seeder must not race a native Steam install creating its
         // first steamapps directory. Keep the account disconnected throughout.
-        await session.suspend()
         if runtimeBusy {
             error = "Close the active game session before preparing the Valve client."
         } else {
             do {
                 try await SteamRuntimeInstaller.shared.prepare(prefix: MadeiraDock.prefix) { [weak self] stage in
-                    await MainActor.run { self?.valveClientPreparationStatus = stage }
+                    await MainActor.run {
+                        guard let self, generation == self.accountGeneration else { return }
+                        self.valveClientPreparationStatus = stage
+                    }
                 }
+                guard generation == accountGeneration else { return }
                 valveClientPreparationStatus = nil
                 error = nil
             } catch {
+                guard generation == accountGeneration else { return }
                 valveClientPreparationStatus = nil
                 self.error = error.localizedDescription
             }
         }
         sessionReservedForLaunch = preserveLaunchReservation
-        if generation == accountGeneration, signedIn, !runtimeBusy, !preserveLaunchReservation {
+        if signedIn, !runtimeBusy, !preserveLaunchReservation {
             session.resume()
             await connectAndLoad()
-            for id in restartIDs {
-                if let entry = games.first(where: { $0.id == id }) { download(entry) }
-            }
         }
     }
 
@@ -254,42 +403,52 @@ final class SteamLibraryModel: ObservableObject {
     }
 
     func signOut() async {
+        persistDownloadQueue()
         accountGeneration &+= 1
+        let generation = accountGeneration
         signedIn = false
         accountName = nil
         await stopConnectionAndDownloads()
-        games = []
-        installedIDs = []
-        progress = [:]
-        activeDownloads = []
-        pausedDownloads = []
-        downloadErrors = [:]
+        guard generation == accountGeneration else { return }
+        clearAccountDownloadState()
         SteamSignIn.signOut()
-        signedIn = false
-        accountName = nil
     }
 
     /// Releases the authenticated Steam connection before WineVision VR starts its
-    /// Wine session. Keep it suspended until the caller has completed the game
-    /// session; Steam must not log this account on from both clients at once.
+    /// Wine session. Waiting downloads and the interrupted active install survive.
     func prepareForLaunch() async {
         sessionReservedForLaunch = true
+        requeueActiveDownloads()
         await stopConnectionAndDownloads()
     }
 
-    /// Called by the launcher when preflight or JIT setup fails before a
-    /// session is accepted, so the native Steam library can reconnect.
+    /// Reconnects after a launch fails or a game session ends.
     func resumeAfterLaunchFailure() {
+        guard !runtimeBusy, !isPreparingValveClient else { return }
         sessionReservedForLaunch = false
+        guard suspendingDownloads == 0 else {
+            resumeWhenDownloadsStop = true
+            return
+        }
         session.resume()
-        if signedIn { Task { await connectAndLoad() } }
+        if signedIn { Task { await connectAndLoad(); startNextDownload() } }
     }
 
     private func stopConnectionAndDownloads() async {
+        suspendingDownloads += 1
+        defer {
+            suspendingDownloads -= 1
+            if suspendingDownloads == 0 && resumeWhenDownloadsStop {
+                resumeWhenDownloadsStop = false
+                resumeAfterLaunchFailure()
+            }
+        }
         let tasks = Array(downloadTasks.values)
         tasks.forEach { $0.cancel() }
         for task in tasks { await task.value }
         downloadTasks.removeAll()
+        downloadTokens.removeAll()
+        activeDownloads.removeAll()
         await session.suspend()
     }
 }

@@ -11,6 +11,8 @@ struct SteamLibraryView: View {
     @State private var selectedGame: SteamLibraryEntry?
     @State private var search = ""
     @State private var filter = LibraryFilter.all
+    @State private var selectingDownloads = false
+    @State private var selectedDownloadIDs: [Int] = []
 
     private enum LibraryFilter: String, CaseIterable {
         case all = "All games", installed = "Installed", downloads = "Downloads"
@@ -26,7 +28,7 @@ struct SteamLibraryView: View {
             case .all: matchesFilter = true
             case .installed: matchesFilter = model.installedIDs.contains(entry.id)
             case .downloads:
-                matchesFilter = model.activeDownloads.contains(entry.id) || model.pausedDownloads.contains(entry.id)
+                matchesFilter = model.activeDownloads.contains(entry.id) || model.queuedDownloads.contains(entry.id) || model.pausedDownloads.contains(entry.id)
                     || model.downloadErrors[entry.id] != nil
             }
             return matchesSearch && matchesFilter
@@ -54,7 +56,23 @@ struct SteamLibraryView: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 16)], spacing: 16) {
                             ForEach(visibleGames) { entry in
-                                Button { selectedGame = entry } label: { gameCard(entry) }
+                                Button {
+                                    if selectingDownloads {
+                                        guard !model.installedIDs.contains(entry.id),
+                                              !model.activeDownloads.contains(entry.id),
+                                              !model.queuedDownloads.contains(entry.id) else { return }
+                                        if selectedDownloadIDs.contains(entry.id) { selectedDownloadIDs.removeAll { $0 == entry.id } }
+                                        else { selectedDownloadIDs.append(entry.id) }
+                                    } else { selectedGame = entry }
+                                } label: {
+                                    gameCard(entry).overlay(alignment: .topTrailing) {
+                                        if selectingDownloads {
+                                            Image(systemName: selectedDownloadIDs.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                                                .font(.title2).foregroundStyle(.white).padding(10)
+                                                .opacity(model.installedIDs.contains(entry.id) || model.activeDownloads.contains(entry.id) || model.queuedDownloads.contains(entry.id) ? 0.3 : 1)
+                                        }
+                                    }
+                                }
                                     .buttonStyle(.plain).hoverEffect(.highlight)
                             }
                         }.padding(.horizontal, 24).padding(.bottom, 24)
@@ -72,7 +90,23 @@ struct SteamLibraryView: View {
                 // Never tie navigation to a network request, error or runtime state.
                 ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
+                    if selectingDownloads {
+                        Button("Queue \(selectedDownloadIDs.count)", systemImage: "arrow.down.circle") {
+                            for id in selectedDownloadIDs {
+                                if let entry = model.games.first(where: { $0.id == id }) { model.download(entry) }
+                            }
+                            selectedDownloadIDs = []
+                            selectingDownloads = false
+                            filter = .downloads
+                        }.disabled(selectedDownloadIDs.isEmpty)
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Menu {
+                        Button(selectingDownloads ? "Cancel selection" : "Select games to download", systemImage: "checkmark.circle") {
+                            selectedDownloadIDs = []
+                            selectingDownloads.toggle()
+                        }.disabled(!model.signedIn)
                         Button("Refresh library", systemImage: "arrow.clockwise") { Task { await model.refreshLibrary() } }
                         Button(model.isPreparingValveClient ? "Preparing Valve client…" : "Prepare Valve client", systemImage: "arrow.down.circle") {
                             Task { await model.prepareValveClient() }
@@ -111,12 +145,14 @@ struct SteamLibraryView: View {
 
     private func status(_ id: Int) -> String {
         if model.activeDownloads.contains(id) { return "Downloading" }
+        if let index = model.queuedDownloads.firstIndex(of: id) { return "Queued · \(index + 1)" }
         if model.downloadErrors[id] != nil { return "Download interrupted" }
         if model.pausedDownloads.contains(id) { return "Paused" }
         return model.installedIDs.contains(id) ? "Installed" : "Ready to download"
     }
 
     private func statusIcon(_ id: Int) -> String {
+        if model.queuedDownloads.contains(id) { return "text.line.first.and.arrowtriangle.forward" }
         if model.downloadErrors[id] != nil { return "exclamationmark.circle" }
         return model.installedIDs.contains(id) ? "checkmark.circle" : "arrow.down.circle"
     }
@@ -132,6 +168,9 @@ struct SteamLibraryView: View {
                 Spacer()
                 Button("Dismiss", systemImage: "xmark") { model.error = nil }.labelStyle(.iconOnly)
             }.padding().background(.regularMaterial)
+        } else if !model.queuedDownloads.isEmpty {
+            Label("\(model.queuedDownloads.count) queued · One game downloads at a time\(model.runtimeBusy ? "; waiting for the game to close" : "")", systemImage: "list.bullet")
+                .font(.footnote).padding().frame(maxWidth: .infinity).background(.regularMaterial)
         }
     }
 }
@@ -143,6 +182,7 @@ private struct SteamGameDownloadView: View {
     let closeLibrary: () -> Void
 
     private var isActive: Bool { model.activeDownloads.contains(entry.id) }
+    private var queuePosition: Int? { model.queuedDownloads.firstIndex(of: entry.id).map { $0 + 1 } }
     private var failure: String? { model.downloadErrors[entry.id] }
     private var isPartial: Bool {
         DepotDownloader.hasPartialDownload(appID: UInt32(entry.id), steamApps: SteamInstallPaths.steamApps(drive: MadeiraDock.drive))
@@ -176,6 +216,9 @@ private struct SteamGameDownloadView: View {
                     HStack {
                         if isActive {
                             Button("Pause download", systemImage: "pause.fill") { model.pause(entry.id) }
+                        } else if let queuePosition {
+                            Label("Queued · \(queuePosition)", systemImage: "list.bullet")
+                            Button("Remove from queue", systemImage: "xmark.circle") { model.removeQueued(entry.id) }
                         } else if model.installedIDs.contains(entry.id), !isPartial, failure == nil {
                             if !MadeiraDock.clientInstalled {
                                 Button(model.isPreparingValveClient ? "Preparing Valve client…" : "Prepare Valve client", systemImage: "arrow.down.circle") {
@@ -200,11 +243,11 @@ private struct SteamGameDownloadView: View {
                                     .buttonStyle(.borderedProminent)
                                     .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
                             }
-                            Button("Update / repair") { model.download(entry) }.disabled(model.runtimeBusy)
+                            Button(model.activeDownloads.isEmpty ? "Update / repair" : "Queue update / repair") { model.download(entry) }
                         } else {
-                            Button(failure != nil ? "Retry download" : (isPartial || model.pausedDownloads.contains(entry.id) ? "Resume download" : "Download"), systemImage: "arrow.down.circle.fill") {
+                            Button(model.runtimeBusy || !model.activeDownloads.isEmpty ? "Add to download queue" : (failure != nil ? "Retry download" : (isPartial || model.pausedDownloads.contains(entry.id) ? "Resume download" : "Download")), systemImage: "arrow.down.circle.fill") {
                                 model.download(entry)
-                            }.buttonStyle(.borderedProminent).disabled(model.runtimeBusy || !model.activeDownloads.isEmpty)
+                            }.buttonStyle(.borderedProminent)
                         }
                         Spacer()
                     }
@@ -222,6 +265,8 @@ private struct SteamGameDownloadView: View {
                             .font(.footnote).foregroundStyle(.orange)
                     }
                     Text("Selecting a game returns to the launcher. Press Play there; Windows execution requires StikDebug/JIT setup.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("Add more games from your library to queue them in order. The queue is saved for this Steam account and waits while a game is running. Paused downloads stay paused until you resume them.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Text("You can close this view at any time. Closing it does not delete the download.")
                         .font(.footnote).foregroundStyle(.secondary)

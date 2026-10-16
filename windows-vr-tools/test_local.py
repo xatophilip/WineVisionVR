@@ -74,6 +74,8 @@ def main():
                       'windows-vr-tools/tests', '-v'])
     run('vr-registration', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration.py'])
     run('steam-launch-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_launch_selection.py'])
+    run('steam-download-queue', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_queue.py',
+                                  '--build', build / 'steam-download-queue'])
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
                                     '--build', build / 'desktop-contract'])
     run('guest-runtime-mapping', [python, 'windows-runtime-plugin/Tests/test_guest_runtime_mapping.py',

@@ -364,3 +364,24 @@ thumbstick input. That capture records 1,834 submitted game frames and short
 recorded GPU command failures. These are initial playable-level samples, not
 a long stability/thermal benchmark or a comparative performance improvement.
 The previous spontaneous immersive-view closure remains under investigation.
+
+### Download queue
+
+The Steam library now supports selecting several uninstalled games using
+**Select games to download** in the menu, then **Queue N**. Selection order is
+queue order. Individual game sheets also enqueue downloads and update/repair
+requests. The Downloads filter includes waiting entries and shows their queue
+positions; a queued game can be removed from its download sheet.
+
+One game install runs at a time on the shared native Steam connection. The
+existing downloader still fetches up to eight chunks concurrently. Completion,
+failure or an explicit pause allows the next waiting game to start. A failed
+game remains available for retry; a paused game waits for explicit resume.
+Pending app IDs and pause/update intent are saved separately for each Steam
+account, without authentication data. The queue waits during Wine launch,
+gameplay and Valve-client preparation so the native and Windows Steam clients
+do not compete for the account session.
+
+Queue changes require a new app build. Host regression tests use the production
+queue model with controlled session/downloader substitutes; they do not fetch
+games or establish background execution while visionOS suspends the app.
