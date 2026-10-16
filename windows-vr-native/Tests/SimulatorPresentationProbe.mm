@@ -38,14 +38,16 @@ int main(int argc, char **argv) { @autoreleasepool {
     depthDesc.depthWriteEnabled = YES;
     id<MTLDepthStencilState> depthState = [device newDepthStencilStateWithDescriptor:depthDesc];
 
-    for (bool array : { false, true }) {
-        MTLTextureDescriptor *inputDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB width:8 height:8 mipmapped:NO];
+    for (MTLPixelFormat sourceFormat : {MTLPixelFormatBGRA8Unorm_sRGB, MTLPixelFormatRGBA8Unorm_sRGB}) for (bool array : { false, true }) {
+        MTLTextureDescriptor *inputDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:sourceFormat width:8 height:8 mipmapped:NO];
         inputDesc.storageMode = MTLStorageModeShared;
         inputDesc.usage = MTLTextureUsageShaderRead;
         if (array) { inputDesc.textureType = MTLTextureType2DArray; inputDesc.arrayLength = 2; }
         id<MTLTexture> input = [device newTextureWithDescriptor:inputDesc];
         uint8_t pixels[8*8*4];
-        for (unsigned i=0; i<64; ++i) { pixels[i*4]=32; pixels[i*4+1]=64; pixels[i*4+2]=128; pixels[i*4+3]=0; }
+        const unsigned redIndex = sourceFormat == MTLPixelFormatRGBA8Unorm_sRGB ? 0u : 2u;
+        const unsigned blueIndex = 2u-redIndex;
+        for (unsigned i=0; i<64; ++i) { pixels[i*4+blueIndex]=32; pixels[i*4+1]=64; pixels[i*4+redIndex]=128; pixels[i*4+3]=0; }
         [input replaceRegion:MTLRegionMake2D(0,0,8,8) mipmapLevel:0 slice:array ? 1 : 0 withBytes:pixels bytesPerRow:32 bytesPerImage:256];
         MTLTextureDescriptor *outputDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm_sRGB width:16 height:16 mipmapped:NO];
         outputDesc.storageMode = MTLStorageModePrivate;
@@ -67,7 +69,7 @@ int main(int argc, char **argv) { @autoreleasepool {
             const float value = test==0 ? 0.0f : 0.0002f;
             const bool gradient = test>=2;
             if (gradient) {
-                for (unsigned y=0; y<8; ++y) for (unsigned x=0; x<8; ++x) pixels[(y*8+x)*4+2]=32+x*16;
+                for (unsigned y=0; y<8; ++y) for (unsigned x=0; x<8; ++x) pixels[(y*8+x)*4+redIndex]=32+x*16;
                 [input replaceRegion:MTLRegionMake2D(0,0,8,8) mipmapLevel:0 slice:array ? 1 : 0 withBytes:pixels bytesPerRow:32 bytesPerImage:256];
             }
             id<MTLCommandBuffer> commands = [queue commandBuffer];

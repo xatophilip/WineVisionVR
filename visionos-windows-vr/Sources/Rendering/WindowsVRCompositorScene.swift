@@ -23,7 +23,11 @@ struct WindowsVRCompositorScene: Scene {
         ImmersiveSpace(id: Self.identifier) {
             CompositorLayer(configuration: WindowsVRCompositorConfiguration()) { layerRenderer in
                 let transfer = WindowsVRLayerRendererTransfer(renderer: layerRenderer)
+                let taskIdentity = UUID().uuidString
+                LaunchLogFile.append("lifecycle", "CompositorLayer created task=\(taskIdentity)")
                 let task = Task.detached(executorPreference: WindowsVRRenderTaskExecutor.shared) {
+                    LaunchLogFile.append("lifecycle", "Render task entered id=\(taskIdentity)")
+                    defer { LaunchLogFile.append("lifecycle", "Render task returned id=\(taskIdentity) cancelled=\(Task.isCancelled)") }
                     if #available(visionOS 27.0, *) {
                         let renderer = WindowsVRCompositorRenderer(layerRenderer: transfer.renderer)
                         await renderer.run()
@@ -32,6 +36,7 @@ struct WindowsVRCompositorScene: Scene {
                 WindowsVRCompositorTaskStore.shared.install(task)
             }
             .onDisappear {
+                model.recordLifecycleEvent("CompositorLayer onDisappear; cancelling renderer")
                 WindowsVRCompositorTaskStore.shared.stop()
                 Task { await model.immersiveSpaceDidClose() }
             }
@@ -53,6 +58,7 @@ private final class WindowsVRCompositorTaskStore: @unchecked Sendable {
             task = newTask
             return previous
         }
+        LaunchLogFile.append("lifecycle", "Render task installed replacingExisting=\(previous != nil)")
         previous?.cancel()
     }
 
@@ -62,6 +68,7 @@ private final class WindowsVRCompositorTaskStore: @unchecked Sendable {
             task = nil
             return running
         }
+        LaunchLogFile.append("lifecycle", "Render task store stop hasTask=\(running != nil)")
         running?.cancel()
         wvr_compositor_pause_v1()
     }
@@ -281,7 +288,7 @@ private final class WindowsVRCompositorRenderer {
                 autoreleasepool { renderNextFrame() }
             case .invalidated:
                 Self.log.notice("Layer renderer invalidated")
-                LaunchLogFile.append("lifecycle", "Layer renderer invalidated")
+                LaunchLogFile.append("lifecycle", "Layer renderer invalidated worldTracking=\(worldTracking.state) trackingStarted=\(trackingStarted) cancelled=\(Task.isCancelled)")
                 return
             @unknown default:
                 return
@@ -292,14 +299,17 @@ private final class WindowsVRCompositorRenderer {
     private func startTracking() async {
         let authorization = await arSession.requestAuthorization(for: [.worldSensing, .accessoryTracking])
         Self.log.notice("ARKit authorization: worldSensing=\(String(describing: authorization[.worldSensing])) accessoryTracking=\(String(describing: authorization[.accessoryTracking]))")
+        LaunchLogFile.append("tracking", "ARKit authorization world=\(String(describing: authorization[.worldSensing])) accessory=\(String(describing: authorization[.accessoryTracking]))")
         let controllerProviders = await controllerTracking.configure(
             authorized: authorization[.accessoryTracking] == .allowed
         )
         var providers: [any DataProvider] = [worldTracking]
         providers.append(contentsOf: controllerProviders)
+        LaunchLogFile.append("tracking", "ARKit run requested providers=\(providers.count)")
         do {
             try await arSession.run(providers)
         } catch {
+            LaunchLogFile.append("tracking", "ARKit run failed; fallback to world only: \(String(String(describing: error).prefix(512)))")
             // A controller provider must never take head tracking down with it:
             // without a device anchor every drawable is dropped by the compositor.
             Self.log.error("ARKitSession.run with \(providers.count) providers failed: \(String(describing: error)); retrying with world tracking only")
@@ -307,11 +317,13 @@ private final class WindowsVRCompositorRenderer {
             do {
                 try await arSession.run([worldTracking])
             } catch {
+                LaunchLogFile.append("tracking", "ARKit world-only run failed: \(String(String(describing: error).prefix(512)))")
                 Self.log.error("ARKitSession.run (world tracking only) failed: \(String(describing: error))")
                 publishUnavailablePose()
                 return
             }
         }
+        LaunchLogFile.append("tracking", "ARKit run returned worldState=\(worldTracking.state)")
         Self.log.notice("ARKit session running; worldTracking.state=\(String(describing: self.worldTracking.state))")
     }
 
@@ -416,9 +428,13 @@ private final class WindowsVRCompositorRenderer {
               let view1 = target(for: drawable, viewIndex: 1)
         else { return false }
 
+        // Game swapchains use RGBA sRGB; the display can remain BGRA. The
+        // spatial presentation shader samples color and writes the display's
+        // format, so no cross-format blit or extra conversion pass is needed.
+        let producerFormat = UInt32(MTLPixelFormat.rgba8Unorm_srgb.rawValue)
         return wvr_compositor_publish_targets_v1(
-            view0.width, view0.height, view0.pixelFormat,
-            view1.width, view1.height, view1.pixelFormat
+            view0.width, view0.height, producerFormat,
+            view1.width, view1.height, producerFormat
         ) == 0
     }
 
@@ -624,7 +640,6 @@ private final class WindowsVRCompositorRenderer {
                        source.x <= source.texture.width && source.y <= source.texture.height &&
                        source.width <= source.texture.width - source.x &&
                        source.height <= source.texture.height - source.y &&
-                       (!consumeGuestFrame || producerFormats[index] == targets[index].pixelFormat) &&
                        UInt32(source.texture.pixelFormat.rawValue) == producerFormats[index] &&
                        source.texture.device === layerRenderer.device
             }
@@ -670,7 +685,7 @@ private final class WindowsVRCompositorRenderer {
                     }
                     lastTransferTime = now
                 }
-                // Read + write bytes for two BGRA8 eye copies; no CPU readback.
+                // Read + write bytes for two four-channel 8-bit eye copies; no CPU readback.
                 transferBytes &+= UInt64(leftSource.width * leftSource.height + rightSource.width * rightSource.height) * 8
             }
         }
@@ -768,6 +783,7 @@ private final class WindowsVRCompositorRenderer {
     /// actually drew can be looked at without a headset.
     private func encodeFrameProbe(_ source: EyeSource, label: String, on commandBuffer: any MTLCommandBuffer) {
         let width = source.width, height = source.height, bytesPerRow = width * 4
+        let rgba = source.texture.pixelFormat == .rgba8Unorm || source.texture.pixelFormat == .rgba8Unorm_srgb
         guard width > 0, height > 0,
               let buffer = layerRenderer.device.makeBuffer(length: bytesPerRow * height, options: .storageModeShared),
               let blit = commandBuffer.makeBlitCommandEncoder() else { return }
@@ -788,7 +804,7 @@ private final class WindowsVRCompositorRenderer {
                 var x = 0
                 while x < width {
                     let o = y * bytesPerRow + x * 4
-                    let b = Int(bytes[o]), g = Int(bytes[o + 1]), r = Int(bytes[o + 2]), a = Int(bytes[o + 3])
+                    let b = Int(bytes[o + (rgba ? 2 : 0)]), g = Int(bytes[o + 1]), r = Int(bytes[o + (rgba ? 0 : 2)]), a = Int(bytes[o + 3])
                     let m = max(r, max(g, b))
                     if m > 8 { lit += 1 }
                     if m > 64 { bright += 1 }
@@ -805,7 +821,7 @@ private final class WindowsVRCompositorRenderer {
                let provider = CGDataProvider(data: Data(bytes: bytes, count: bytesPerRow * height) as CFData),
                let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
                                    space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-                                   bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue),
+                                   bitmapInfo: CGBitmapInfo(rawValue: (rgba ? CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.noneSkipLast.rawValue : CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue)),
                                    provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
                let destination = CGImageDestinationCreateWithURL(documents.appendingPathComponent("\(label)-probe-\((index / 3) % 4).png") as CFURL,
                                                                   "public.png" as CFString, 1, nil) {

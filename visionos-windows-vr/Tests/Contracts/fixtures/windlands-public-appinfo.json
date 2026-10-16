@@ -1,0 +1,112 @@
+{
+  "source": "Valve Steam public PICS product information",
+  "retrieved_date": "2026-10-15",
+  "request": {
+    "apps": [
+      428370
+    ],
+    "anonymous": true,
+    "auto_access_tokens": false
+  },
+  "raw_response_sha256": "78159fe028ec05efd22037bd7ebdee9f4060a95280ebe37bdf6af6ee11695c00",
+  "appid": 428370,
+  "change_number": 39716201,
+  "missing_token": false,
+  "config": {
+    "contenttype": "3",
+    "installdir": "Windlands",
+    "launch": {
+      "0": {
+        "executable": "Windlands_Win_x86.exe",
+        "arguments": "-vrmode None -desktop",
+        "description": "Play Windlands",
+        "type": "default",
+        "config": {
+          "oslist": "windows",
+          "osarch": "32"
+        }
+      },
+      "1": {
+        "executable": "Windlands_Win_x64.exe",
+        "arguments": "-vrmode None -desktop",
+        "description": "Play Windlands",
+        "type": "default",
+        "config": {
+          "oslist": "windows",
+          "osarch": "64"
+        }
+      },
+      "4": {
+        "executable": "Windlands_Win_x64.exe",
+        "arguments": "-vrmode Oculus -oculus",
+        "description": "Launch Oculus Rift in VR Mode",
+        "type": "othervr",
+        "config": {
+          "oslist": "windows",
+          "osarch": "64"
+        }
+      },
+      "5": {
+        "executable": "Windlands_Win_x64.exe",
+        "description": "Steam VR/Open VR",
+        "type": "vr",
+        "config": {
+          "oslist": "windows",
+          "osarch": "64"
+        }
+      },
+      "6": {
+        "executable": "Windlands_OSX_x64.app",
+        "description": "Play Windlands",
+        "type": "default",
+        "config": {
+          "oslist": "macos",
+          "osarch": "64"
+        }
+      },
+      "9": {
+        "executable": "Windlands.apk",
+        "type": "openxr",
+        "config": {
+          "oslist": "android"
+        },
+        "description_loc": {
+          "english": "Windlands Steam Frame Native"
+        },
+        "description": "Windlands Steam Frame Native"
+      }
+    },
+    "steamcontrollertemplateindex": "1",
+    "steamcontrollerconfigfileids": "595035330"
+  },
+  "public_branch": {
+    "buildid": "24798177",
+    "timeupdated": "1787063280",
+    "timebuildupdated": "1787061229"
+  },
+  "windows_x64_depot": {
+    "id": 428372,
+    "config": {
+      "oslist": "windows",
+      "osarch": "64"
+    },
+    "manifests": {
+      "public": {
+        "gid": "5907969424268343999",
+        "size": "3204337829",
+        "download": "749570576"
+      },
+      "alpha": {
+        "gid": "5907969424268343999",
+        "size": "3204337829",
+        "download": "749570576"
+      },
+      "beta": {
+        "gid": "5907969424268343999",
+        "size": "3204337829",
+        "download": "749570576"
+      }
+    }
+  },
+  "limitations": "Publisher metadata only. No game files downloaded, PE header inspected, or headset compatibility/performance tested."
+}

@@ -54,6 +54,9 @@ final class LauncherModel {
     private var steamSelection: (game: DockGame, option: UInt32)?
     private(set) var transferImportError: String?
     var renderScaleDraft: Float = 1
+    var presentationModeDraft: WindowsPresentationMode = .immersiveVR
+    private(set) var desktopPresentationVisible = false
+    private(set) var desktopSurfaceReady = false
     var profileNameDraft = L("Default", "Standard")
     var launchArgumentsText = "[]"
     var isShowingImportError = false
@@ -74,6 +77,8 @@ final class LauncherModel {
         } catch {
             libraryError = error.localizedDescription
         }
+        let lastSteamApp = UserDefaults.standard.integer(forKey: Self.lastSteamAppKey)
+        if lastSteamApp > 0 { try? selectInstalledSteamGame(appID: lastSteamApp) }
     }
 
     var selectedSteamAppID: Int? { steamSelection?.game.id }
@@ -83,6 +88,7 @@ final class LauncherModel {
               !isLaunching, !hasAcceptedLaunch, !isStopping, !requiresRestart,
               runtime.isAvailable,
               manifest.map({ runtime.supportsGraphics($0.graphics) }) == true,
+              runtime.supportsPresentation(presentationModeDraft),
               manifest?.backend == .windowsWineFEX
         else { return false }
         let arguments = draftArguments
@@ -103,6 +109,9 @@ final class LauncherModel {
         }
         if !runtime.supportsGraphics(manifest.graphics) {
             return L("The app does not contain the matching experimental DXMT D3D12 runtime package. D3D11 is not substituted for a D3D12 request.", "Das passende experimentelle DXMT-D3D12-Laufzeitpaket ist nicht in der App enthalten. Eine D3D12-Anfrage wird nicht durch D3D11 ersetzt.")
+        }
+        if !runtime.supportsPresentation(presentationModeDraft) {
+            return WindowsRuntimeError.presentationUnavailable(presentationModeDraft).localizedDescription
         }
         if requiresRestart {
             return L("This process has consumed its single runtime session. Restart the app before another launch.", "Dieser Prozess hat seine einzige Laufzeitsitzung verwendet. Starte die App neu, bevor du ein weiteres Spiel startest.")
@@ -153,6 +162,7 @@ final class LauncherModel {
             let decoded = try JSONDecoder().decode(WindowsGameManifest.self, from: data)
             try decoded.validate()
             manifest = decoded
+            presentationModeDraft = decoded.presentation
             manifestName = url.lastPathComponent
             launchArgumentsText = Self.argumentText(decoded.launchArguments)
             selectedLibraryEntryID = nil
@@ -247,6 +257,7 @@ final class LauncherModel {
         gameDirectory = game.directory
         gameFolderName = game.directory.lastPathComponent
         manifest = game.manifest
+        presentationModeDraft = game.manifest.presentation
         manifestName = L("manifest.json — Mac transfer", "manifest.json — Mac-Übertragung")
         selectedLibraryEntryID = nil
         selectedProfileID = nil
@@ -275,7 +286,8 @@ final class LauncherModel {
             graphics: manifest.graphics,
             launchArguments: draftArguments,
             environment: manifest.environment,
-            renderScale: renderScaleDraft
+            renderScale: renderScaleDraft,
+            presentation: presentationModeDraft
         )
         var updated = library
         if let index = updated.firstIndex(where: { $0.manifest.id == manifest.id }) {
@@ -329,11 +341,13 @@ final class LauncherModel {
             selectedLibraryEntryID = id
             manifestName = L("\(entry.manifest.title) — library", "\(entry.manifest.title) — Bibliothek")
             manifest = entry.manifest
+            presentationModeDraft = entry.manifest.presentation
             let profile = entry.selectedProfile
             selectedProfileID = profile?.id
             if let profile {
                 manifest = try profile.applying(to: entry.manifest)
                 renderScaleDraft = profile.renderScale
+                presentationModeDraft = profile.presentation
                 profileNameDraft = profile.name
                 launchArgumentsText = Self.argumentText(profile.launchArguments)
             } else {
@@ -350,11 +364,13 @@ final class LauncherModel {
     }
 
     private static let steamLaunchOptionsKey = "steam.launchOptionsByAppID"
+    private static let lastSteamAppKey = "steam.lastSelectedAppID"
 
     private func rememberSteamLaunchOption(_ option: UInt32, for game: DockGame) {
         var options = UserDefaults.standard.dictionary(forKey: Self.steamLaunchOptionsKey) as? [String: Int] ?? [:]
         options[String(game.id)] = Int(option)
         UserDefaults.standard.set(options, forKey: Self.steamLaunchOptionsKey)
+        UserDefaults.standard.set(game.id, forKey: Self.lastSteamAppKey)
     }
 
     /// A saved Steam library entry only stores a manifest (`steam.shared`, titled with the
@@ -400,6 +416,7 @@ final class LauncherModel {
         manifest = try profile.applying(to: entry.manifest)
         selectedProfileID = profile.id
         renderScaleDraft = profile.renderScale
+        presentationModeDraft = profile.presentation
         profileNameDraft = profile.name
         launchArgumentsText = Self.argumentText(profile.launchArguments)
         var updated = library
@@ -431,7 +448,8 @@ final class LauncherModel {
             graphics: baseManifest.graphics,
             launchArguments: arguments,
             environment: baseManifest.environment,
-            renderScale: renderScaleDraft
+            renderScale: renderScaleDraft,
+            presentation: presentationModeDraft
         )
         var updated = library
         guard let index = updated.firstIndex(where: { $0.id == entry.id }) else {
@@ -447,6 +465,7 @@ final class LauncherModel {
         try persist(updated)
         selectedProfileID = profile.id
         renderScaleDraft = profile.renderScale
+        presentationModeDraft = profile.presentation
         profileNameDraft = profile.name
         manifest = try profile.applying(to: updated[index].manifest)
     }
@@ -469,10 +488,12 @@ final class LauncherModel {
         if let profile = updated[index].selectedProfile {
             manifest = try profile.applying(to: updated[index].manifest)
             renderScaleDraft = profile.renderScale
+            presentationModeDraft = profile.presentation
             profileNameDraft = profile.name
             launchArgumentsText = Self.argumentText(profile.launchArguments)
         } else {
             manifest = updated[index].manifest
+            presentationModeDraft = updated[index].manifest.presentation
             renderScaleDraft = 1
             profileNameDraft = L("Default", "Standard")
             launchArgumentsText = Self.argumentText(updated[index].manifest.launchArguments)
@@ -499,6 +520,36 @@ final class LauncherModel {
         }
     }
 
+    func selectInstalledSteamGame(appID: Int) throws {
+        guard let game = MadeiraDock.games(drive: MadeiraDock.drive).first(where: { $0.id == appID && $0.installed }) else {
+            throw DockError.message("The requested Steam game is not installed.")
+        }
+        let remembered = UserDefaults.standard.dictionary(forKey: Self.steamLaunchOptionsKey) as? [String: Int] ?? [:]
+        let previousIndex = remembered[String(appID)].flatMap(UInt32.init(exactly:))
+        let options = SteamLocalAppInfo.launchOptions(appID: appID, game: game, drive: MadeiraDock.drive)
+            ?? SteamLibraryModel.shared.games.first(where: { $0.id == appID })?.game.launches
+        guard let options else {
+            // Before Valve's first successful run there is no appinfo cache.
+            // Reuse only a choice the user already made; never invent an index.
+            guard let previousIndex else { throw DockError.message("Select this game and its launch option in the Steam library once before retrying.") }
+            selectSteamGame(game, launchOption: previousIndex)
+            return
+        }
+        let previous = options.first { $0.index == previousIndex && SteamLibraryModel.isInstalled($0, game: game, drive: MadeiraDock.drive) }
+        guard let option = previous ?? SteamLibraryModel.preferredLaunchOption(options, game: game, drive: MadeiraDock.drive),
+              let index = option.index else { throw DockError.message("No installed Windows launch option was found.") }
+        selectSteamGame(game, launchOption: index)
+    }
+
+    /// The physical Windlands trial passes its splash with OpenSSL's optional
+    /// CPU acceleration disabled. Keep this workaround local to that game;
+    /// the underlying CPU/emulator fault has not been established.
+    nonisolated static func steamCompatibilityEnvironment(appID: Int, base: [String: String] = [:]) -> [String: String] {
+        var environment = base
+        if appID == 428370 { environment["OPENSSL_ia32cap"] = "0" }
+        return environment
+    }
+
     func selectSteamGame(_ game: DockGame, launchOption: UInt32) {
         guard canChangeSelection else { return }
         do {
@@ -514,9 +565,20 @@ final class LauncherModel {
             let executable = directory.appendingPathComponent("dockhost.exe")
             if FileManager.default.fileExists(atPath: executable.path) { try FileManager.default.removeItem(at: executable) }
             try FileManager.default.copyItem(at: host, to: executable)
+            let options = SteamLocalAppInfo.launchOptions(appID: game.id, game: game, drive: MadeiraDock.drive)
+                ?? SteamLibraryModel.shared.games.first(where: { $0.id == game.id })?.game.launches ?? []
+            let type = options.first(where: { $0.index == launchOption })?.type.lowercased()
+            let mode: WindowsPresentationMode
+            switch type {
+            case "vr", "othervr", nil: mode = .immersiveVR
+            default: mode = .desktop
+            }
             let selected = try WindowsGameManifest(id: "steam.shared", title: game.name,
                 executableRelativePath: "AVPPlaySteam/dockhost.exe", backend: .windowsWineFEX,
-                graphics: .direct3D11, launchArguments: [], schemaVersion: 1)
+                graphics: .direct3D11, launchArguments: [],
+                environment: Self.steamCompatibilityEnvironment(appID: game.id),
+                presentation: mode, schemaVersion: 1)
+            presentationModeDraft = mode
             releaseGameDirectoryAccess()
             manifest = selected
             manifestName = L("Steam — \(game.name)", "Steam — \(game.name)")
@@ -600,7 +662,7 @@ final class LauncherModel {
         launchLog.notice("Guest display layer registered (\(Int(layer.drawableSize.width))x\(Int(layer.drawableSize.height)))")
     }
 
-    func launch(prepareCompositor: () async throws -> Void) async {
+    func launch(preparePresentation: () async throws -> Void) async {
         guard canLaunch, let gameDirectory else { return }
         do {
             let launchManifest = try effectiveManifest()
@@ -612,13 +674,13 @@ final class LauncherModel {
             try runtime.preflight(manifest: launchManifest, gameDirectory: gameDirectory)
             launchLog.notice("Launch: preflight passed, preparing debugger")
             try await jitCoordinator.prepareDebugger()
-            launchLog.notice("Launch: debugger prepared, opening compositor")
-            guard wvr_compositor_set_render_scale_v1(renderScaleDraft) == 0 else {
+            launchLog.notice("Launch: debugger prepared, opening \(launchManifest.presentation.rawValue)")
+            if launchManifest.presentation == .immersiveVR && wvr_compositor_set_render_scale_v1(renderScaleDraft) != 0 {
                 throw WindowsVRLibraryError.invalidProfileArguments
             }
-            try await prepareCompositor()
-            launchLog.notice("Launch: compositor ready (immersiveOpen=\(self.immersiveSpaceIsOpen))")
-            guard immersiveSpaceIsOpen, !immersiveSpaceClosedDuringLaunch else {
+            try await preparePresentation()
+            launchLog.notice("Launch: presentation ready (mode=\(launchManifest.presentation.rawValue), immersiveOpen=\(self.immersiveSpaceIsOpen), desktopReady=\(self.desktopSurfaceReady))")
+            guard launchManifest.presentation == .desktop ? desktopSurfaceReady : (immersiveSpaceIsOpen && !immersiveSpaceClosedDuringLaunch) else {
                 throw LaunchPreparationFailure.immersiveSpaceClosed
             }
             // The native downloader logs off before Valve's guest client uses
@@ -642,7 +704,7 @@ final class LauncherModel {
             // WindowsVRCore emits only the unchanged v1 plugin JSON request.
             launchLog.notice("Launch: starting runtime")
             logImageBases()
-            Self.registerGuestDisplayLayer()
+            if launchManifest.presentation == .immersiveVR { Self.registerGuestDisplayLayer() }
             Self.resetRuntimeLog()
             if LaunchDiagnostics.enabled { setenv("WVR_TRACE_BRIDGE", "1", 1) }
             if LaunchDiagnostics.enabled, let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
@@ -650,14 +712,16 @@ final class LauncherModel {
             }
             Self.configureGraphicsEnvironment()
             try Self.configureAudioEnvironment()
-            if launchManifest.id == "steam.shared" { try OpenXRRegistration.install(prefix: MadeiraDock.prefix) }
+            if launchManifest.id == "steam.shared" && launchManifest.presentation == .immersiveVR {
+                try OpenXRRegistration.install(prefix: MadeiraDock.prefix)
+            }
             try await runtime.launch(manifest: launchManifest, gameDirectory: gameDirectory)
             launchLog.notice("Launch: runtime accepted the launch")
             hasAcceptedLaunch = true
             if LaunchDiagnostics.enabled { watchGuestStartup() }
             runtimeStatus = L("Launch accepted; game readiness unknown", "Start wurde angenommen; Spielbereitschaft unbekannt")
             beginStatusMonitoring()
-            if !immersiveSpaceIsOpen || immersiveSpaceClosedDuringLaunch {
+            if launchManifest.presentation == .immersiveVR && (!immersiveSpaceIsOpen || immersiveSpaceClosedDuringLaunch) {
                 try await runtime.stop()
                 hasAcceptedLaunch = false
                 requiresRestart = true
@@ -680,6 +744,98 @@ final class LauncherModel {
                 launchError = L("The game could not be launched: \(detail?.isEmpty == false ? detail! : error.localizedDescription)", "Das Spiel konnte nicht gestartet werden: \(detail?.isEmpty == false ? detail! : error.localizedDescription)")
             }
         }
+    }
+
+    func showDesktopPresentation() {
+        desktopSurfaceReady = false
+        desktopPresentationVisible = true
+    }
+
+    func desktopSurfaceDidAttach() { desktopSurfaceReady = true }
+
+    func desktopSurfaceDidDetach() { desktopSurfaceReady = false }
+
+    func waitForDesktopReady(timeout: Duration = .seconds(12)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            guard desktopPresentationVisible else { throw LaunchPreparationFailure.desktopUnavailable }
+            if desktopSurfaceReady { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw LaunchPreparationFailure.desktopUnavailable
+    }
+
+    func hideDesktopPresentation() {
+        // A live guest keeps its surface and folder access until exit is confirmed.
+        guard !isLaunching, !hasAcceptedLaunch, !isStopping else { return }
+        _ = winios_compositor_set_hidden(1)
+        desktopPresentationVisible = false
+        desktopSurfaceReady = false
+    }
+
+    func selectDesktopDemo() throws {
+        guard canChangeSelection else { return }
+        guard let resource = Bundle.main.url(forResource: "DesktopDemo", withExtension: nil),
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let fm = FileManager.default
+        let directory = documents.appendingPathComponent("WindowsVR/Apps/DesktopDemo", isDirectory: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard isAppOwnedURL(directory), directory.standardizedFileURL == directory.resolvingSymlinksInPath().standardizedFileURL else {
+            throw ImportFailure.folderAccessDenied
+        }
+        let executable = directory.appendingPathComponent("desktop-demo.exe")
+        let values = try? executable.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+        guard values?.isSymbolicLink != true, values?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
+        // Atomic replacement of only our executable preserves the user's demo-note.txt.
+        try Data(contentsOf: resource.appendingPathComponent("desktop-demo.exe")).write(to: executable, options: .atomic)
+        let demo = try JSONDecoder().decode(WindowsGameManifest.self,
+            from: Data(contentsOf: resource.appendingPathComponent("manifest.json")))
+        releaseGameDirectoryAccess()
+        manifest = demo
+        presentationModeDraft = .desktop
+        manifestName = L("Built-in Windows desktop test", "Integrierter Windows-Desktop-Test")
+        gameDirectory = directory
+        gameFolderName = directory.lastPathComponent
+        selectedLibraryEntryID = nil
+        selectedProfileID = nil
+        renderScaleDraft = 1
+        launchArgumentsText = "[]"
+        launchError = nil
+    }
+
+    func selectVRSmoke() throws {
+        guard canChangeSelection else { return }
+        guard let resource = Bundle.main.url(forResource: "VRSmoke", withExtension: nil),
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let fm = FileManager.default
+        let directory = documents.appendingPathComponent("WindowsVR/Apps/VRSmoke", isDirectory: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard isAppOwnedURL(directory), directory.standardizedFileURL == directory.resolvingSymlinksInPath().standardizedFileURL else {
+            throw ImportFailure.folderAccessDenied
+        }
+        let executable = directory.appendingPathComponent("vr-smoke.exe")
+        let values = try? executable.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+        guard values?.isSymbolicLink != true, values?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
+        // Atomic replacement of only our executable preserves the user's test log in the Windows prefix.
+        try Data(contentsOf: resource.appendingPathComponent("vr-smoke.exe")).write(to: executable, options: .atomic)
+        let demo = try JSONDecoder().decode(WindowsGameManifest.self,
+            from: Data(contentsOf: resource.appendingPathComponent("manifest.json")))
+        releaseGameDirectoryAccess()
+        manifest = demo
+        presentationModeDraft = .immersiveVR
+        manifestName = L("Built-in VR test scene", "Integrierte VR-Testszene")
+        gameDirectory = directory
+        gameFolderName = directory.lastPathComponent
+        selectedLibraryEntryID = nil
+        selectedProfileID = nil
+        renderScaleDraft = 1
+        launchArgumentsText = "[]"
+        launchError = nil
     }
 
     func waitForCompositorReady(timeout: Duration = .seconds(12)) async throws {
@@ -706,16 +862,18 @@ final class LauncherModel {
     }
 
     func immersiveSpaceDidOpen() {
+        recordLifecycleEvent("immersiveSpaceDidOpen")
         launchLog.notice("Immersive space opened")
         immersiveSpaceIsOpen = true
         immersiveSpaceClosedDuringLaunch = false
     }
 
     func immersiveSpaceDidClose() async {
+        recordLifecycleEvent("immersiveSpaceDidClose")
         launchLog.notice("Immersive space closed (launching=\(self.isLaunching), accepted=\(self.hasAcceptedLaunch))")
         immersiveSpaceIsOpen = false
         if isLaunching { immersiveSpaceClosedDuringLaunch = true }
-        guard hasAcceptedLaunch, !isStopping, !stopRequested else { return }
+        guard presentationModeDraft == .immersiveVR, hasAcceptedLaunch, !isStopping, !stopRequested else { return }
         isStopping = true
         defer { isStopping = false }
         do {
@@ -734,6 +892,7 @@ final class LauncherModel {
 
     func stop() async {
         guard hasAcceptedLaunch, !isStopping, !stopRequested else { return }
+        recordLifecycleEvent("stop() called")
         isStopping = true
         launchError = nil
         defer { isStopping = false }
@@ -770,7 +929,8 @@ final class LauncherModel {
             executableRelativePath: launchManifest.executableRelativePath,
             launchArguments: launchManifest.launchArguments,
             environment: launchManifest.environment,
-            spatialRenderScale: renderScaleDraft
+            spatialRenderScale: renderScaleDraft,
+            presentation: launchManifest.presentation
         )
         let pluginAvailable = runtime.isAvailable
         let graphicsAssessment: WindowsVRCapabilityAssessment
@@ -864,6 +1024,7 @@ final class LauncherModel {
             graphics: base.graphics,
             launchArguments: draftArguments,
             environment: base.environment,
+            presentation: presentationModeDraft,
             schemaVersion: base.schemaVersion
         )
     }
@@ -887,6 +1048,7 @@ final class LauncherModel {
     }
 
     private func refreshCompositorCounters() {
+        guard presentationModeDraft == .immersiveVR else { compositorCounters = nil; return }
         var stats = WVRCompositorStatsV1()
         stats.abiVersion = WVR_COMPOSITOR_ABI_VERSION
         stats.structSize = UInt32(MemoryLayout<WVRCompositorStatsV1>.size)
@@ -940,6 +1102,11 @@ final class LauncherModel {
         }
     }
 
+    func recordLifecycleEvent(_ reason: String) {
+        let snapshot = runtime.nativeStatus()
+        LaunchLogFile.append("lifecycle", "\(reason.prefix(160)) accepted=\(hasAcceptedLaunch) restart=\(requiresRestart) launching=\(isLaunching) stopping=\(isStopping) stopRequested=\(stopRequested) immersiveOpen=\(immersiveSpaceIsOpen) nativeState=\(snapshot.state) compilerHandled=\(compilerFailureHandled)")
+    }
+
     private func beginStatusMonitoring() {
         statusMonitor?.cancel()
         statusMonitor = Task { [weak self] in
@@ -951,6 +1118,8 @@ final class LauncherModel {
                    wvr_metal_copy_compiler_failure(&shaderError, UInt32(shaderError.count)) != 0 {
                     self.compilerFailureHandled = true
                     let detail = String(cString: shaderError)
+                    self.recordLifecycleEvent("compiler failure requests session stop")
+                    LaunchLogFile.append("compiler-failure", String(detail.prefix(768)))
                     await self.stop()
                     self.launchError = detail
                     self.requiresRestart = true
@@ -976,6 +1145,7 @@ final class LauncherModel {
             stopRequested = true
             runtimeStatus = L("Exit requested; waiting for the guest and Wine process", "Beenden angefordert; warte auf Gast- und Wine-Prozess")
         case 6:
+            recordLifecycleEvent("native runtime transitioned to stopped")
             stopRequested = false
             runtimeStatus = L("Runtime stopped; restart the app before another launch", "Laufzeit beendet; starte die App neu, bevor du ein weiteres Spiel startest")
             hasAcceptedLaunch = false
@@ -983,6 +1153,8 @@ final class LauncherModel {
             statusMonitor?.cancel()
             releaseGameDirectoryAccess()
         case 7:
+            recordLifecycleEvent("native runtime transitioned to failed")
+            if let error = snapshot.lastError { LaunchLogFile.append("runtime-failure", String(error.prefix(768))) }
             stopRequested = false
             runtimeStatus = L("Runtime failed; restart the app before another launch", "Laufzeitfehler; starte die App neu, bevor du ein weiteres Spiel startest")
             hasAcceptedLaunch = false
@@ -1063,11 +1235,14 @@ private enum LauncherFailure: LocalizedError {
 private enum LaunchPreparationFailure: LocalizedError {
     case immersiveSpaceClosed
     case rendererTimedOut
+    case desktopUnavailable
 
     var errorDescription: String? {
         switch self {
         case .immersiveSpaceClosed:
             L("The immersive renderer closed before the launch request was sent.", "Der immersive Renderer wurde geschlossen, bevor die Startanfrage gesendet wurde.")
+        case .desktopUnavailable:
+            L("The Windows desktop surface could not be prepared.", "Die Windows-Desktop-Anzeige konnte nicht vorbereitet werden.")
         case .rendererTimedOut:
             L("The immersive renderer did not bind Metal, publish stereo targets, and provide a fresh tracked head pose within 12 seconds. No launch request was sent.", "Der immersive Renderer hat innerhalb von 12 Sekunden weder Metal gebunden und Stereo-Ziele veröffentlicht noch eine aktuelle getrackte Kopfpose bereitgestellt. Es wurde keine Startanfrage gesendet.")
         }

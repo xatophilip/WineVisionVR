@@ -1,0 +1,13 @@
+# Opt in after preparing the same runtime/resources as project.yml.
+# This intentionally generates the same project/scheme; regenerate project.yml
+# to return to the normal diagnostics-off app.
+include:
+  - project.yml
+targets:
+  VisionOSWindowsVR:
+    info:
+      properties:
+        # Literal YAML booleans become plist booleans. Environment-substituted
+        # strings such as "YES" do not satisfy LaunchDiagnostics' `as? Bool`.
+        WVRDiagnostics: true
+        WVRFrameCapture: false

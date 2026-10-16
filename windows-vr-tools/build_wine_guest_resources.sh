@@ -81,16 +81,21 @@ if ! grep -Fq 'programs/wineboot/arm64ec-windows/wineboot.exe:' "$wine_build/Mak
         enable_wineboot=arm64ec enable_services=arm64ec enable_rpcss=arm64ec \
             enable_winedevice=arm64ec enable_plugplay=arm64ec \
             PATH="$AVPPLAY_LLVM_MINGW_ROOT/bin:$PATH" \
-            ../configure --enable-archs=arm64ec --without-x --disable-tests --enable-winegstreamer
+            ../configure --enable-archs=arm64ec --without-x --without-freetype --disable-tests --enable-winegstreamer
     )
 fi
 bash "$runtime_root/build/wine-pe/build-ntdll.sh"
 JOBS="${AVPPLAY_BUILD_JOBS:-4}" bash "$runtime_root/build/wine-pe/build-modules.sh" \
-    cryptsp d3dx11_43 msvcp110 msvcr110 xaudio2_7 \
+    cryptsp crypt32 cryptbase rsaenh d3dx11_43 msvcp110 msvcr110 xaudio2_7 \
     kernel32 kernelbase advapi32 shell32 shlwapi version user32 gdi32 \
     setupapi newdev wininet ws2_32 ole32 rpcrt4 secur32 bcrypt msvcrt winmm \
     apisetschema mswsock dnsapi iphlpapi winhttp \
-    ucrtbase userenv ntoskrnl.exe cfgmgr32 combase coml2 mpr msacm32 sechost shcore win32u
+    ucrtbase userenv ntoskrnl.exe cfgmgr32 combase coml2 mpr msacm32 sechost shcore win32u \
+    cabinet comctl32 comdlg32 cryptnet cryptui d3dcompiler_47 dhcpcsvc dinput8 \
+    gdiplus imm32 jsproxy mfplat mfreadwrite mlang netapi32 nsi oleaut32 propsys \
+    shdocvw urlmon windowscodecs winspool.drv wintrust \
+    advpack compstui hid imagehlp mf netutils rtworkq wined3d \
+    dbghelp evr opengl32 d3d9 dxva2 glu32 ieframe sspicli psapi
 # Create the four core Wine executables as ARM64EC PE files, then strip only
 # debug sections before placing them in the guest farm.
 core_program_targets=(
@@ -115,7 +120,7 @@ if ! grep -Fq 'programs/winedevice/aarch64-windows/winedevice.exe:' \
     (
         cd "$wine_aarch64_build"
         enable_winedevice=aarch64 PATH="$AVPPLAY_LLVM_MINGW_ROOT/bin:$PATH" \
-            ../configure --enable-archs=aarch64 --without-x --disable-tests
+            ../configure --enable-archs=aarch64 --without-x --without-freetype --disable-tests
     )
 fi
 aarch64_winedevice_target=programs/winedevice/aarch64-windows/winedevice.exe

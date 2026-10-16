@@ -205,7 +205,7 @@ def guest_resource_files(source):
         if farm_root.is_symlink() or not farm_root.is_dir():
             fail(f"Required Wine builtin farm is missing: {farm_root}")
         for path in farm_root.iterdir():
-            if path.is_file() and (path.suffix.casefold() == ".dll" or path.name.casefold() in WINE_TOOLS):
+            if path.is_file() and (path.suffix.casefold() in (".dll", ".drv") or path.name.casefold() in WINE_TOOLS):
                 if path.is_symlink():
                     fail(f"Guest resource must not be a symlink: {path}")
                 files[path.relative_to(source).as_posix()] = sha256_file(path)

@@ -67,7 +67,10 @@ for name, probe, sources in [
 
 before = (build / 'baseline.bin').read_bytes()
 after = (build / 'patched.bin').read_bytes()
-assert len(before) == len(after) == 32768
+# Two source formats x 2D/array x eight scenarios x 16x16 pixels.
+# Each output pixel contributes four color bytes and one float32 depth.
+expected_bytes = 2 * 2 * 8 * 16 * 16 * (4 + 4)
+assert len(before) == len(after) == expected_bytes, (len(before), len(after), expected_bytes)
 color_difference = 0
 depth_difference = 0.0
 for row in range(len(before) // 128):
@@ -78,7 +81,7 @@ for row in range(len(before) // 128):
         struct.unpack_from('16f', before, offset+64),
         struct.unpack_from('16f', after, offset+64))))
 assert color_difference <= 1 and depth_difference < 1e-6
-checks['pixel-comparison'] = {'pixels': 4096, 'maxChannelDifference': color_difference,
+checks['pixel-comparison'] = {'pixels': len(before) // 8, 'maxChannelDifference': color_difference,
                               'maxDepthDifference': depth_difference}
 (build / 'results.json').write_text(json.dumps({
     'scope': 'macOS host CPU and real Metal GPU; no game or headset FPS measurement',

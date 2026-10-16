@@ -101,3 +101,14 @@ launcher, the project-owned OpenXR runtime, the visionOS compositor bridge, and
 the required native dependencies. Until those pieces are present and report
 their state, a packaged DLL must not be presented as proof that a game launched,
 rendered, or is running.
+
+
+The macOS LLVM-MinGW route applies `0007-mingw-msvc-aggregate-return.patch`.
+MSVC's x64 virtual member ABI puts the receiver before the hidden aggregate
+result pointer; MinGW uses the reverse ordering. Generated outward thunks
+translate matrix, distortion, hidden-mesh and color returns without changing
+backend implementations. C FnTable calls use qualified native methods, and
+the original complete vtable is restored before object destruction. The
+reproducible mixed-compiler regression is `tests/test_msvc_aggregate_abi.py`;
+see its `--help` for required host Wine/compiler paths. Its passing host result
+does not establish headset/FEX gameplay.

@@ -177,15 +177,29 @@ private struct SteamGameDownloadView: View {
                         if isActive {
                             Button("Pause download", systemImage: "pause.fill") { model.pause(entry.id) }
                         } else if model.installedIDs.contains(entry.id), !isPartial, failure == nil {
-                            Menu {
-                                let options = entry.game.launches ?? []
-                                if options.isEmpty { selectButton("Select to launch", option: 0) }
-                                ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                                    selectButton(optionLabel(option), option: option.index ?? 0)
+                            if !MadeiraDock.clientInstalled {
+                                Button(model.isPreparingValveClient ? "Preparing Valve client…" : "Prepare Valve client", systemImage: "arrow.down.circle") {
+                                    Task {
+                                        await model.prepareValveClient()
+                                        if model.error == nil && MadeiraDock.clientInstalled {
+                                            await model.play(entry)
+                                            if model.error == nil { closeLibrary() }
+                                        }
+                                    }
                                 }
-                            } label: { Label("Select to launch", systemImage: "play.fill") }
                                 .buttonStyle(.borderedProminent)
-                                .disabled(model.runtimeBusy || !MadeiraDock.bundled || !MadeiraDock.clientInstalled)
+                                .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
+                            } else {
+                                Menu {
+                                    let options = entry.game.launches ?? []
+                                    if options.isEmpty { selectButton("Select to launch", option: 0) }
+                                    ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                                        selectButton(optionLabel(option), option: option.index ?? 0)
+                                    }
+                                } label: { Label("Select to launch", systemImage: "play.fill") }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
+                            }
                             Button("Update / repair") { model.download(entry) }.disabled(model.runtimeBusy)
                         } else {
                             Button(failure != nil ? "Retry download" : (isPartial || model.pausedDownloads.contains(entry.id) ? "Resume download" : "Download"), systemImage: "arrow.down.circle.fill") {
@@ -195,8 +209,20 @@ private struct SteamGameDownloadView: View {
                         Spacer()
                     }
                     if !MadeiraDock.clientInstalled {
-                        Text("Prepare the Valve client from the library menu before launching a game.").font(.footnote).foregroundStyle(.secondary)
+                        Text("The Valve launch files are required before selecting an installed game. Preparing them does not start Wine.").font(.footnote).foregroundStyle(.secondary)
                     }
+                    if let stage = model.valveClientPreparationStatus {
+                        HStack { ProgressView(); Text(stage).font(.footnote) }
+                    }
+                    if let error = model.error {
+                        Label(error, systemImage: "exclamationmark.circle").font(.footnote).foregroundStyle(.orange)
+                    }
+                    if !MadeiraDock.bundled {
+                        Label("The Steam launch host is missing from this app build.", systemImage: "exclamationmark.circle")
+                            .font(.footnote).foregroundStyle(.orange)
+                    }
+                    Text("Selecting a game returns to the launcher. Press Play there; Windows execution requires StikDebug/JIT setup.")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Text("You can close this view at any time. Closing it does not delete the download.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.padding(24)
@@ -214,7 +240,15 @@ private struct SteamGameDownloadView: View {
 
     private func optionLabel(_ option: SteamLaunchOption) -> String {
         let executable = URL(fileURLWithPath: option.executable).lastPathComponent
-        return ["vr", "othervr"].contains(option.type.lowercased()) ? "VR · \(executable)" : executable
+        let label: String
+        switch option.type.lowercased() {
+        case "vr": label = "SteamVR / OpenVR · \(executable)"
+        case "othervr": label = "Other VR · \(executable)"
+        default: label = executable
+        }
+        // Windlands publishes SteamVR, Oculus and desktop entries for the same
+        // executable. Include its public launch arguments to distinguish them.
+        return option.arguments.isEmpty ? label : "\(label) — \(option.arguments)"
     }
 
     private func bytes(_ count: UInt64) -> String {

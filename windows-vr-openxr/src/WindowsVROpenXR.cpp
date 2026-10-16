@@ -4,7 +4,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <Windows.h>
+#include <windows.h>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>
@@ -115,7 +115,6 @@ struct Instance {
   std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> profileBindings;
   XrPath selectedProfile = XR_NULL_PATH;
   int selectedProfilePriority = -1;
-  bool bindingsAttached = false;
   uint64_t nextPath = 1;
 };
 struct Session {
@@ -156,7 +155,8 @@ struct Session {
   bool actionSetsAttached = false;
   std::vector<XrActionSet> attachedActionSets;
   std::vector<XrActionSet> activeActionSets;
-  std::unordered_map<XrActionSet, XrPath> activeSetSubactions;
+  // Union of synchronized hand subactions; XR_NULL_PATH enables both supported hands.
+  std::unordered_map<XrActionSet, uint32_t> activeSetSubactions;
   ControllerSample controllers{};
   std::vector<SessionEvent> events;
   bool interactionProfileChanged = false;
@@ -210,6 +210,8 @@ struct Space {
   XrReferenceSpaceType type = XR_REFERENCE_SPACE_TYPE_LOCAL;
   XrPosef poseInReferenceSpace{{0,0,0,1},{0,0,0}};
   XrAction action = XR_NULL_HANDLE;
+  // Spaces retain the backing action after its public handle is destroyed.
+  Action *actionResource = nullptr;
   XrPath subactionPath = XR_NULL_PATH;
   XrPosef poseInActionSpace{{0,0,0,1},{0,0,0}};
 };
@@ -218,6 +220,8 @@ struct ActionSet {
   Instance *instance = nullptr;
   std::string name;
   uint32_t priority = 0;
+  // Binding suggestions are immutable once this set has ever been attached.
+  bool bindingsAttached = false;
   std::vector<XrAction> actions;
 };
 struct Action {
@@ -254,13 +258,13 @@ enum TraceStage : size_t { TraceNegotiation, TraceTargets, TraceInstance, TraceS
                            TraceWaitFrame, TraceBeginFrame, TraceEndFrame, TraceProcLookup, TraceExtensions,
                            TraceViewConfigViews, TraceBeginSession, TraceSwapchainFormats, TraceCreateSwapchain,
                            TraceSwapchainImages, TraceAcquireImage, TraceWaitImage, TraceReleaseImage,
-                           TraceLocateViews, TracePollEvent, TraceStageCount };
+                           TraceLocateViews, TracePollEvent, TraceEndSession, TraceStageCount };
 std::atomic<uint32_t> g_traceCounts[TraceStageCount]{};
 const char *TraceStageName(TraceStage stage) {
   static constexpr const char *names[] = {"negotiation", "targets", "create-instance",
       "create-session", "wait-frame", "begin-frame", "end-frame", "get-proc-addr", "enumerate-extensions",
       "view-config-views", "begin-session", "swapchain-formats", "create-swapchain", "swapchain-images",
-      "acquire-image", "wait-image", "release-image", "locate-views", "poll-event"};
+      "acquire-image", "wait-image", "release-image", "locate-views", "poll-event", "end-session"};
   return names[stage];
 }
 bool ShouldTrace(TraceStage stage) {
@@ -397,6 +401,14 @@ bool ActionSetIsActive(Session *session,ActionSet *set) {
   return std::find(session->activeActionSets.begin(),session->activeActionSets.end(),handle)!=session->activeActionSets.end();
 }
 
+bool ActionSetRoleIsActive(Session *session, ActionSet *set, uint32_t role) {
+  if (role != kControllerLeft && role != kControllerRight) return false;
+  std::lock_guard<std::recursive_mutex> actionLock(session->actionMutex);
+  if (!ActionSetIsActive(session, set)) return false;
+  const auto found = session->activeSetSubactions.find(reinterpret_cast<XrActionSet>(set));
+  return found != session->activeSetSubactions.end() && (found->second & (1u << role)) != 0;
+}
+
 uint64_t ButtonForBinding(const std::string &binding) {
   if(binding.find("/input/a/click")!=std::string::npos||binding.find("/input/x/click")!=std::string::npos||binding.find("/input/primary/click")!=std::string::npos)return 1ull<<0;
   if(binding.find("/input/b/click")!=std::string::npos||binding.find("/input/y/click")!=std::string::npos||binding.find("/input/secondary/click")!=std::string::npos)return 1ull<<1;
@@ -531,53 +543,69 @@ bool ValidTargets(const WVRDXMTTargetInfoV1 &targets) {
 
 bool QueryTargets(WVRDXMTTargetInfoV1 &targets, bool &d3d12Available) {
   TraceEntry(TraceTargets);
-  // Query both backends; retain D3D11 as the preferred target source while
-  // independently establishing whether the D3D12 queue extension is present.
-  WVRDXMTTargetInfoV1 targets11{};
-  WVRDXMTTargetInfoV1 targets12{};
+  WVRDXMTTargetInfoV1 targets11{},targets12{};
   bool d3d11Available=false;
   d3d12Available=false;
   ID3D11Device *device11=nullptr;
   ID3D11DeviceContext *context11=nullptr;
+  IMTLD3D11ContextExt2 *extension11=nullptr;
   D3D_FEATURE_LEVEL feature11{};
-  if(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,
-      D3D11_SDK_VERSION,&device11,&feature11,&context11)) && device11 && context11) {
-    IMTLD3D11ContextExt2 *extension11=nullptr;
-    if(SUCCEEDED(context11->QueryInterface(kIIDMTLD3D11ContextExt2,
-        reinterpret_cast<void**>(&extension11))) && extension11) {
-      d3d11Available=SUCCEEDED(extension11->GetWindowsVRTargets(&targets11)) && ValidTargets(targets11);
-      extension11->Release();
+  HRESULT query11=E_NOINTERFACE,targetsResult11=E_FAIL;
+  bool queried11=false,read11=false;
+  const HRESULT create11=D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,
+      D3D11_SDK_VERSION,&device11,&feature11,&context11);
+  if(SUCCEEDED(create11)&&device11&&context11){
+    queried11=true;
+    query11=context11->QueryInterface(kIIDMTLD3D11ContextExt2,reinterpret_cast<void**>(&extension11));
+    if(SUCCEEDED(query11)&&extension11){
+      read11=true;targetsResult11=extension11->GetWindowsVRTargets(&targets11);
+      d3d11Available=SUCCEEDED(targetsResult11)&&ValidTargets(targets11);
     }
-    context11->Release();
-    device11->Release();
-  } else {
-    if(context11) context11->Release();
-    if(device11) device11->Release();
   }
-
   ID3D12Device *device12=nullptr;
   ID3D12CommandQueue *queue12=nullptr;
   IMTLD3D12CommandQueueExt *extension12=nullptr;
   const char *selectedGraphics=std::getenv("WVR_GRAPHICS_API");
   const bool discoverD3D12=!selectedGraphics||std::strcmp(selectedGraphics,"direct3D12")==0;
-  if(discoverD3D12&&SUCCEEDED(CreateOptionalD3D12Device(nullptr,D3D_FEATURE_LEVEL_11_0,
-      IID_PPV_ARGS(&device12))) && device12) {
-    D3D12_COMMAND_QUEUE_DESC desc{};
-    desc.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
-    if(SUCCEEDED(device12->CreateCommandQueue(&desc,IID_PPV_ARGS(&queue12))) && queue12 &&
-       SUCCEEDED(queue12->QueryInterface(kIIDMTLD3D12CommandQueueExt,
-           reinterpret_cast<void**>(&extension12))) && extension12) {
-      d3d12Available=SUCCEEDED(extension12->GetWindowsVRTargets(&targets12)) && ValidTargets(targets12);
+  HRESULT create12=E_NOINTERFACE,queueResult12=E_NOINTERFACE,query12=E_NOINTERFACE,targetsResult12=E_FAIL;
+  bool queued12=false,queried12=false,read12=false;
+  if(discoverD3D12){
+    create12=CreateOptionalD3D12Device(nullptr,D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device12));
+    if(SUCCEEDED(create12)&&device12){
+      D3D12_COMMAND_QUEUE_DESC desc{};desc.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
+      queued12=true;queueResult12=device12->CreateCommandQueue(&desc,IID_PPV_ARGS(&queue12));
+      if(SUCCEEDED(queueResult12)&&queue12){
+        queried12=true;query12=queue12->QueryInterface(kIIDMTLD3D12CommandQueueExt,reinterpret_cast<void**>(&extension12));
+        if(SUCCEEDED(query12)&&extension12){
+          read12=true;targetsResult12=extension12->GetWindowsVRTargets(&targets12);
+          d3d12Available=SUCCEEDED(targetsResult12)&&ValidTargets(targets12);
+        }
+      }
     }
   }
-  if(extension12) extension12->Release();
-  if(queue12) queue12->Release();
-  if(device12) device12->Release();
-  if(d3d11Available) targets=targets11;
-  else if(d3d12Available) targets=targets12;
-  const bool available = d3d11Available || d3d12Available;
-  TraceResult(TraceTargets, available ? XR_SUCCESS : XR_ERROR_RUNTIME_FAILURE,
-      (static_cast<uint64_t>(d3d11Available) << 1) | static_cast<uint64_t>(d3d12Available));
+  // Bound diagnostics distinguish a skipped optional backend from a failure,
+  // and a missing presentation target from device/extension initialization.
+  static std::atomic<uint32_t> diagnosticCount{0};
+  if(diagnosticCount.fetch_add(1,std::memory_order_relaxed)<16){
+    char line[768];
+    std::snprintf(line,sizeof(line),"[WVR OpenXR] targets d3d11 create=0x%08lx device=%d context=%d queryAttempted=%d query=0x%08lx extension=%d readAttempted=%d read=0x%08lx valid=%d generation=%llu size=%ux%u,%ux%u format=%u,%u\n",
+      static_cast<unsigned long>(create11),device11!=nullptr,context11!=nullptr,queried11,static_cast<unsigned long>(query11),extension11!=nullptr,read11,static_cast<unsigned long>(targetsResult11),ValidTargets(targets11),
+      static_cast<unsigned long long>(targets11.generation),targets11.width[0],targets11.height[0],targets11.width[1],targets11.height[1],targets11.pixelFormat[0],targets11.pixelFormat[1]);TraceLine(line);
+    std::snprintf(line,sizeof(line),"[WVR OpenXR] targets d3d12 discoveryEnabled=%d create=0x%08lx device=%d queueAttempted=%d queue=0x%08lx queuePresent=%d queryAttempted=%d query=0x%08lx extension=%d readAttempted=%d read=0x%08lx valid=%d generation=%llu size=%ux%u,%ux%u format=%u,%u\n",
+      discoverD3D12,static_cast<unsigned long>(create12),device12!=nullptr,queued12,static_cast<unsigned long>(queueResult12),queue12!=nullptr,queried12,static_cast<unsigned long>(query12),extension12!=nullptr,read12,static_cast<unsigned long>(targetsResult12),ValidTargets(targets12),
+      static_cast<unsigned long long>(targets12.generation),targets12.width[0],targets12.height[0],targets12.width[1],targets12.height[1],targets12.pixelFormat[0],targets12.pixelFormat[1]);TraceLine(line);
+  }
+  if(extension11)extension11->Release();
+  if(context11)context11->Release();
+  if(device11)device11->Release();
+  if(extension12)extension12->Release();
+  if(queue12)queue12->Release();
+  if(device12)device12->Release();
+  if(d3d11Available)targets=targets11;
+  else if(d3d12Available)targets=targets12;
+  const bool available=d3d11Available||d3d12Available;
+  TraceResult(TraceTargets,available?XR_SUCCESS:XR_ERROR_RUNTIME_FAILURE,
+      (static_cast<uint64_t>(d3d11Available)<<1)|static_cast<uint64_t>(d3d12Available));
   return available;
 }
 
@@ -675,11 +703,10 @@ bool OriginFromSpace(Session *session,Space *space,const WVRDXMTTrackingV1 &trac
   flags=0;
   if(space->action!=XR_NULL_HANDLE){
     std::lock_guard<std::recursive_mutex> actionLock(session->actionMutex);
-    Action*action=GetAction(space->action);if(!action)return false;
+    Action*action=space->actionResource;if(!action)return false;
     uint32_t role=space->subactionPath==XR_NULL_PATH?ActionRole(action):RoleForPath(session->instance,space->subactionPath);
     if(role==UINT32_MAX||!ActionAllowsRole(action,role)||!ActionHasBindingForRole(action,role)||!ActionSetIsActive(session,action->set))return false;
-    auto activePath=session->activeSetSubactions.find(reinterpret_cast<XrActionSet>(action->set));
-    if(activePath!=session->activeSetSubactions.end()&&activePath->second!=XR_NULL_PATH&&RoleForPath(session->instance,activePath->second)!=role)return false;
+    if(!ActionSetRoleIsActive(session,action->set,role))return false;
     WVRDXMTControllerV1 controller{};
     if(FAILED(GetSessionController(session, role, &controller))||(controller.flags&5u)!=5u)return false;
     pose=ComposePose(PoseFromMatrix(controller.originFromController),space->poseInActionSpace);
@@ -873,7 +900,31 @@ XrResult XRAPI_CALL DestroySession(XrSession h){
 XrResult XRAPI_CALL BeginSessionImpl(XrSession h,const XrSessionBeginInfo*info){auto*s=GetSession(h);if(!s||!info)return XR_ERROR_HANDLE_INVALID;if(info->type!=XR_TYPE_SESSION_BEGIN_INFO)return XR_ERROR_VALIDATION_FAILURE;if(info->primaryViewConfigurationType!=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;if(s->begun||s->state!=XR_SESSION_STATE_READY||s->exitRequested)return XR_ERROR_SESSION_NOT_READY;{std::lock_guard<std::mutex> lock(s->frameMutex);s->waitTokenPending=false;s->activeFrame=false;s->frameIndex=0;s->pendingFrameIndex=0;s->activeFrameIndex=0;s->predictedTime=0;s->begun=true;}{std::lock_guard<std::mutex> originLock(s->localOriginMutex);s->localOriginValid=false;}s->frameCondition.notify_all();QueueSessionState(s,XR_SESSION_STATE_SYNCHRONIZED);QueueSessionState(s,XR_SESSION_STATE_VISIBLE);return XR_SUCCESS;}
 XrResult XRAPI_CALL BeginSession(XrSession h,const XrSessionBeginInfo*info){const XrResult result=BeginSessionImpl(h, info);TraceCall(TraceBeginSession,result,0);return result;}
 
-XrResult XRAPI_CALL EndSession(XrSession h){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;{std::lock_guard<std::mutex> lock(s->frameMutex);if(s->activeFrame)return XR_ERROR_CALL_ORDER_INVALID;if(!s->begun)return XR_ERROR_SESSION_NOT_RUNNING;s->begun=false;s->waitTokenPending=false;}s->frameCondition.notify_all();if(s->exitRequested){QueueSessionState(s,XR_SESSION_STATE_EXITING);}else{if(s->state!=XR_SESSION_STATE_STOPPING)QueueSessionState(s,XR_SESSION_STATE_STOPPING);QueueSessionState(s,XR_SESSION_STATE_IDLE);QueueSessionState(s,XR_SESSION_STATE_READY);}return XR_SUCCESS;}
+XrResult XRAPI_CALL EndSessionImpl(XrSession h) {
+  auto *s=GetSession(h);
+  if(!s)return XR_ERROR_HANDLE_INVALID;
+  {
+    std::lock_guard<std::mutex> lock(s->frameMutex);
+    if(!s->begun)return XR_ERROR_SESSION_NOT_RUNNING;
+    if(s->state!=XR_SESSION_STATE_STOPPING)return XR_ERROR_SESSION_NOT_STOPPING;
+    // STOPPING ends the frame loop, even if a tracking-only startup frame was
+    // begun. OpenComposite replaces that session when it receives the game's
+    // graphics device. Discard the frame token; do not fabricate a submission.
+    s->begun=false;
+    s->waitTokenPending=false;
+    s->activeFrame=false;
+    s->activeFrameIndex=0;
+  }
+  s->frameCondition.notify_all();
+  QueueSessionState(s,XR_SESSION_STATE_IDLE);
+  QueueSessionState(s,s->exitRequested?XR_SESSION_STATE_EXITING:XR_SESSION_STATE_READY);
+  return XR_SUCCESS;
+}
+XrResult XRAPI_CALL EndSession(XrSession h) {
+  const XrResult result=EndSessionImpl(h);
+  TraceCall(TraceEndSession,result,0);
+  return result;
+}
 XrResult XRAPI_CALL RequestExitSession(XrSession h){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!s->begun)return XR_ERROR_SESSION_NOT_RUNNING;if(s->exitRequested)return XR_ERROR_CALL_ORDER_INVALID;s->exitRequested=true;s->frameCondition.notify_all();QueueSessionState(s,XR_SESSION_STATE_STOPPING);return XR_SUCCESS;}
 XrResult XRAPI_CALL CreateReferenceSpace(XrSession h,const XrReferenceSpaceCreateInfo*info,XrSpace*out){auto*s=GetSession(h);if(!s||!info||!out)return XR_ERROR_HANDLE_INVALID;if(info->type!=XR_TYPE_REFERENCE_SPACE_CREATE_INFO)return XR_ERROR_VALIDATION_FAILURE;if(info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_LOCAL&&info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_VIEW&&info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_STAGE)return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;auto p=std::make_unique<Space>();p->session=s;p->type=info->referenceSpaceType;p->poseInReferenceSpace=info->poseInReferenceSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=reinterpret_cast<XrSpace>(raw);return XR_SUCCESS;}
 XrResult XRAPI_CALL DestroySpace(XrSpace h){auto*p=GetSpace(h);if(!p)return XR_ERROR_HANDLE_INVALID;std::lock_guard<std::mutex>l(g_mutex);UnregisterHandle(p);p->magic=0;g_spaces.erase(std::remove_if(g_spaces.begin(),g_spaces.end(),[p](auto&x){return x.get()==p;}),g_spaces.end());return XR_SUCCESS;}
@@ -1131,14 +1182,30 @@ XrResult XRAPI_CALL EndFrame(XrSession h,const XrFrameEndInfo*info){
     const auto&v=layer->views[eye];
     if(v.type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW||v.next){TraceResult(TraceEndFrame,XR_ERROR_FEATURE_UNSUPPORTED,activeFrameIndex);return XR_ERROR_FEATURE_UNSUPPORTED;}
     auto*sw=GetSwapchain(v.subImage.swapchain);
-    if(!sw||sw->session!=s||v.subImage.imageArrayIndex>=sw->info.arraySize||sw->targetGeneration!=targets.generation){TraceResult(TraceEndFrame,XR_ERROR_SWAPCHAIN_RECT_INVALID,activeFrameIndex);return XR_ERROR_SWAPCHAIN_RECT_INVALID;}
+    if(!sw||sw->session!=s||v.subImage.imageArrayIndex>=sw->info.arraySize||sw->targetGeneration!=targets.generation){
+      static std::atomic<uint32_t> failures{0};
+      if(failures.fetch_add(1,std::memory_order_relaxed)<16){
+        char line[384];std::snprintf(line,sizeof(line),"[WVR OpenXR] end-frame invalid-swapchain eye=%u exists=%d sessionMatch=%d slice=%u arraySize=%u generation=%llu targetGeneration=%llu\n",
+          eye,sw!=nullptr,sw&&sw->session==s,v.subImage.imageArrayIndex,sw?sw->info.arraySize:0,
+          static_cast<unsigned long long>(sw?sw->targetGeneration:0),static_cast<unsigned long long>(targets.generation));TraceLine(line);
+      }
+      TraceResult(TraceEndFrame,XR_ERROR_SWAPCHAIN_RECT_INVALID,activeFrameIndex);return XR_ERROR_SWAPCHAIN_RECT_INVALID;
+    }
     const auto&rect=v.subImage.imageRect;
     const int64_t rectRight=static_cast<int64_t>(rect.offset.x)+rect.extent.width;
     const int64_t rectBottom=static_cast<int64_t>(rect.offset.y)+rect.extent.height;
     if(rect.offset.x<0||rect.offset.y<0||rect.extent.width<=0||rect.extent.height<=0||
        rectRight>sw->info.width||rectBottom>sw->info.height||
        static_cast<uint32_t>(rect.extent.width)>targets.width[eye]||
-       static_cast<uint32_t>(rect.extent.height)>targets.height[eye]){TraceResult(TraceEndFrame,XR_ERROR_SWAPCHAIN_RECT_INVALID,activeFrameIndex);return XR_ERROR_SWAPCHAIN_RECT_INVALID;}
+       static_cast<uint32_t>(rect.extent.height)>targets.height[eye]){
+      static std::atomic<uint32_t> failures{0};
+      if(failures.fetch_add(1,std::memory_order_relaxed)<16){
+        char line[384];std::snprintf(line,sizeof(line),"[WVR OpenXR] end-frame invalid-rect eye=%u offset=%d,%d extent=%d,%d swapchain=%u,%u target=%u,%u slice=%u arraySize=%u generation=%llu targetGeneration=%llu\n",
+          eye,rect.offset.x,rect.offset.y,rect.extent.width,rect.extent.height,sw->info.width,sw->info.height,targets.width[eye],targets.height[eye],
+          v.subImage.imageArrayIndex,sw->info.arraySize,static_cast<unsigned long long>(sw->targetGeneration),static_cast<unsigned long long>(targets.generation));TraceLine(line);
+      }
+      TraceResult(TraceEndFrame,XR_ERROR_SWAPCHAIN_RECT_INVALID,activeFrameIndex);return XR_ERROR_SWAPCHAIN_RECT_INVALID;
+    }
     needsExt3|=sw->info.arraySize>1||rect.offset.x!=0||rect.offset.y!=0||
        rect.extent.width!=static_cast<int32_t>(sw->info.width)||rect.extent.height!=static_cast<int32_t>(sw->info.height)||
        static_cast<uint32_t>(rect.extent.width)!=targets.width[eye]||static_cast<uint32_t>(rect.extent.height)!=targets.height[eye];
@@ -1340,7 +1407,7 @@ XrResult XRAPI_CALL GetInputSourceLocalizedName(XrSession h,const XrInputSourceL
 
 XrResult XRAPI_CALL CreateActionSpace(XrSession h,const XrActionSpaceCreateInfo*info,XrSpace*out){
   auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_ACTION_SPACE_CREATE_INFO||!out)return XR_ERROR_VALIDATION_FAILURE;auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;if(a->type!=XR_ACTION_TYPE_POSE_INPUT)return XR_ERROR_ACTION_TYPE_MISMATCH;if(info->subactionPath!=XR_NULL_PATH&&std::find(a->subactionPaths.begin(),a->subactionPaths.end(),info->subactionPath)==a->subactionPaths.end())return XR_ERROR_PATH_UNSUPPORTED;
-  auto p=std::make_unique<Space>();p->session=s;p->action=info->action;p->subactionPath=info->subactionPath;p->poseInActionSpace=info->poseInActionSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=reinterpret_cast<XrSpace>(raw);return XR_SUCCESS;
+  auto p=std::make_unique<Space>();p->session=s;p->action=info->action;p->actionResource=a;p->subactionPath=info->subactionPath;p->poseInActionSpace=info->poseInActionSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=reinterpret_cast<XrSpace>(raw);return XR_SUCCESS;
 }
 
 XrResult XRAPI_CALL LocateSpace(XrSpace spaceHandle,XrSpace baseHandle,XrTime time,XrSpaceLocation*out){
@@ -1359,7 +1426,34 @@ XrResult XRAPI_CALL CreateActionSet(XrInstance h,const XrActionSetCreateInfo*inf
   auto*i=GetInstance(h);if(!i)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_ACTION_SET_CREATE_INFO||!out)return XR_ERROR_VALIDATION_FAILURE;std::string name=BoundedName(info->actionSetName,sizeof(info->actionSetName));if(name.empty())return XR_ERROR_NAME_INVALID;
   auto set=std::make_unique<ActionSet>();set->instance=i;set->name=name;set->priority=info->priority;ActionSet*raw=set.get();{std::lock_guard<std::mutex>lock(i->mutex);i->actionSets.push_back(std::move(set));}RegisterHandle(raw);*out=reinterpret_cast<XrActionSet>(raw);return XR_SUCCESS;
 }
-XrResult XRAPI_CALL DestroyActionSet(XrActionSet h){auto*set=GetActionSet(h);if(!set)return XR_ERROR_HANDLE_INVALID;if(!set->actions.empty())return XR_ERROR_CALL_ORDER_INVALID;Instance*i=set->instance;std::lock_guard<std::mutex>lock(i->mutex);UnregisterHandle(set);set->magic=0;i->actionSets.erase(std::remove_if(i->actionSets.begin(),i->actionSets.end(),[set](const auto&value){return value.get()==set;}),i->actionSets.end());return XR_SUCCESS;}
+// Called with the instance mutex held. Public handles die immediately, but
+// backing resources remain instance-owned for surviving action spaces. OpenXR
+// permits retaining those resources until xrDestroyInstance.
+void InvalidateActionHandle(Action *action) {
+  Instance *instance=action->set->instance;
+  const XrAction handle=reinterpret_cast<XrAction>(action);
+  UnregisterHandle(action);
+  action->magic=0;
+  for(auto& profile:instance->profileBindings){
+    auto& list=profile.second;
+    list.erase(std::remove_if(list.begin(),list.end(),[handle](const auto& binding){return binding.action==handle;}),list.end());
+  }
+  auto& siblings=action->set->actions;
+  siblings.erase(std::remove(siblings.begin(),siblings.end(),handle),siblings.end());
+  for(auto it=instance->bindings.begin();it!=instance->bindings.end();){
+    if(it->second==handle)it=instance->bindings.erase(it);else ++it;
+  }
+}
+
+XrResult XRAPI_CALL DestroyActionSet(XrActionSet h) {
+  auto*set=GetActionSet(h);if(!set)return XR_ERROR_HANDLE_INVALID;
+  std::lock_guard<std::mutex>lock(set->instance->mutex);
+  // Destruction cascades to every child action handle, including live children.
+  const auto children=set->actions;
+  for(XrAction handle:children){if(auto*action=GetAction(handle))InvalidateActionHandle(action);}
+  UnregisterHandle(set);set->magic=0;
+  return XR_SUCCESS;
+}
 XrResult XRAPI_CALL CreateAction(XrActionSet h,const XrActionCreateInfo*info,XrAction*out){
   auto*set=GetActionSet(h);if(!set)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_ACTION_CREATE_INFO||!out)return XR_ERROR_VALIDATION_FAILURE;std::string name=BoundedName(info->actionName,sizeof(info->actionName));if(name.empty())return XR_ERROR_NAME_INVALID;
   switch(info->actionType){
@@ -1379,16 +1473,21 @@ XrResult XRAPI_CALL CreateAction(XrActionSet h,const XrActionCreateInfo*info,XrA
   }
   Action*raw=action.get();{std::lock_guard<std::mutex>lock(set->instance->mutex);set->instance->actions.push_back(std::move(action));set->actions.push_back(reinterpret_cast<XrAction>(raw));}RegisterHandle(raw);*out=reinterpret_cast<XrAction>(raw);return XR_SUCCESS;
 }
-XrResult XRAPI_CALL DestroyAction(XrAction h){auto*action=GetAction(h);if(!action)return XR_ERROR_HANDLE_INVALID;Instance*i=action->set->instance;std::lock_guard<std::mutex>lock(i->mutex);UnregisterHandle(action);action->magic=0;for(auto& profile:i->profileBindings){auto& list=profile.second;list.erase(std::remove_if(list.begin(),list.end(),[h](const auto& binding){return binding.action==h;}),list.end());}action->set->actions.erase(std::remove(action->set->actions.begin(),action->set->actions.end(),h),action->set->actions.end());for(auto it=i->bindings.begin();it!=i->bindings.end();)if(it->second==h)it=i->bindings.erase(it);else ++it;i->actions.erase(std::remove_if(i->actions.begin(),i->actions.end(),[action](const auto&value){return value.get()==action;}),i->actions.end());return XR_SUCCESS;}
+XrResult XRAPI_CALL DestroyAction(XrAction h) {
+  auto*action=GetAction(h);if(!action)return XR_ERROR_HANDLE_INVALID;
+  std::lock_guard<std::mutex>lock(action->set->instance->mutex);
+  InvalidateActionHandle(action);
+  return XR_SUCCESS;
+}
 XrResult XRAPI_CALL SuggestInteractionProfileBindings(XrInstance h,const XrInteractionProfileSuggestedBinding*info){
   auto*i=GetInstance(h);if(!i)return XR_ERROR_HANDLE_INVALID;
-  if(i->bindingsAttached)return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
   if(!info||info->type!=XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING||(info->countSuggestedBindings&&!info->suggestedBindings))return XR_ERROR_VALIDATION_FAILURE;
   auto profile=i->pathStrings.find(info->interactionProfile);
   if(profile==i->pathStrings.end()||profile->second.rfind("/interaction_profiles/",0)!=0)return XR_ERROR_PATH_UNSUPPORTED;
   for(uint32_t n=0;n<info->countSuggestedBindings;n++){
     const auto&suggestion=info->suggestedBindings[n];Action*a=GetAction(suggestion.action);
     if(!a||a->set->instance!=i)return XR_ERROR_HANDLE_INVALID;
+    if(a->set->bindingsAttached)return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
     auto binding=i->pathStrings.find(suggestion.binding);
     if(binding==i->pathStrings.end())return XR_ERROR_PATH_UNSUPPORTED;
     const uint32_t role=RoleForPath(i,suggestion.binding);
@@ -1427,26 +1526,50 @@ XrResult XRAPI_CALL SuggestInteractionProfileBindings(XrInstance h,const XrInter
   return XR_SUCCESS;
 }
 XrResult XRAPI_CALL AttachSessionActionSets(XrSession h,const XrSessionActionSetsAttachInfo*info){
-  auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO||(info->countActionSets&&!info->actionSets))return XR_ERROR_VALIDATION_FAILURE;if(s->actionSetsAttached)return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
-  for(uint32_t n=0;n<info->countActionSets;n++){auto*set=GetActionSet(info->actionSets[n]);if(!set||set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;if(std::find(s->attachedActionSets.begin(),s->attachedActionSets.end(),info->actionSets[n])!=s->attachedActionSets.end())return XR_ERROR_VALIDATION_FAILURE;s->attachedActionSets.push_back(info->actionSets[n]);}
-  s->instance->bindingsAttached=true;s->actionSetsAttached=true;{std::lock_guard<std::mutex> eventLock(s->eventMutex);s->interactionProfileChanged=true;}return XR_SUCCESS;
+  auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;
+  if(!info||info->type!=XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO||(info->countActionSets&&!info->actionSets))return XR_ERROR_VALIDATION_FAILURE;
+  if(s->actionSetsAttached)return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
+  std::vector<XrActionSet> attached;
+  for(uint32_t n=0;n<info->countActionSets;n++){
+    const XrActionSet handle=info->actionSets[n];auto*set=GetActionSet(handle);
+    if(!set||set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;
+    if(std::find(attached.begin(),attached.end(),handle)!=attached.end())return XR_ERROR_VALIDATION_FAILURE;
+    attached.push_back(handle);
+  }
+  // Validate the complete list before marking any set/session attached. The
+  // restriction belongs to these sets, not to unrelated new sets in the instance.
+  for(XrActionSet handle:attached)GetActionSet(handle)->bindingsAttached=true;
+  s->attachedActionSets.swap(attached);s->actionSetsAttached=true;
+  {std::lock_guard<std::mutex> eventLock(s->eventMutex);s->interactionProfileChanged=true;}
+  return XR_SUCCESS;
 }
 XrResult XRAPI_CALL GetCurrentInteractionProfile(XrSession h,XrPath userPath,XrInteractionProfileState*out){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!out||out->type!=XR_TYPE_INTERACTION_PROFILE_STATE)return XR_ERROR_VALIDATION_FAILURE;if(RoleForPath(s->instance,userPath)==UINT32_MAX)return XR_ERROR_PATH_UNSUPPORTED;auto found=s->instance->interactionProfiles.find(userPath);out->interactionProfile=found==s->instance->interactionProfiles.end()?XR_NULL_PATH:found->second;return XR_SUCCESS;}
 XrResult XRAPI_CALL SyncActions(XrSession h,const XrActionsSyncInfo*info){
   auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;
   if(!info||info->type!=XR_TYPE_ACTIONS_SYNC_INFO||(info->countActiveActionSets&&!info->activeActionSets))return XR_ERROR_VALIDATION_FAILURE;
   if(!s->actionSetsAttached)return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-  std::vector<XrActionSet> activeSets;std::unordered_map<XrActionSet,XrPath> activeSubactions;
+  std::vector<XrActionSet> activeSets;std::unordered_map<XrActionSet,uint32_t> activeSubactions;
   for(uint32_t n=0;n<info->countActiveActionSets;n++){
     const auto&active=info->activeActionSets[n];auto*set=GetActionSet(active.actionSet);
     if(!set||set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;
     if(std::find(s->attachedActionSets.begin(),s->attachedActionSets.end(),active.actionSet)==s->attachedActionSets.end())return XR_ERROR_ACTIONSET_NOT_ATTACHED;
-    if(std::find(activeSets.begin(),activeSets.end(),active.actionSet)!=activeSets.end())return XR_ERROR_VALIDATION_FAILURE;
+    uint32_t roles=(1u<<kControllerLeft)|(1u<<kControllerRight);
     if(active.subactionPath!=XR_NULL_PATH){
       auto path=s->instance->pathStrings.find(active.subactionPath);
       if(path==s->instance->pathStrings.end()||(path->second!="/user/hand/left"&&path->second!="/user/hand/right"))return XR_ERROR_PATH_UNSUPPORTED;
+      // A non-wildcard must have been declared by an action in this set.
+      const bool declared=std::any_of(set->actions.begin(),set->actions.end(),[&](XrAction handle){
+        auto*action=GetAction(handle);
+        return action&&std::find(action->subactionPaths.begin(),action->subactionPaths.end(),active.subactionPath)!=action->subactionPaths.end();
+      });
+      if(!declared)return XR_ERROR_PATH_UNSUPPORTED;
+      roles=1u<<RoleForPath(s->instance,active.subactionPath);
     }
-    activeSets.push_back(active.actionSet);activeSubactions.emplace(active.actionSet,active.subactionPath);
+    // Multiple entries for a set activate their union. Exact duplicates are
+    // idempotent, and XR_NULL_PATH remains a wildcard regardless of entry order.
+    auto [entry,inserted]=activeSubactions.try_emplace(active.actionSet,0u);
+    if(inserted)activeSets.push_back(active.actionSet);
+    entry->second|=roles;
   }
   ObserveSessionExitRequest(s);
   std::lock_guard<std::recursive_mutex> actionLock(s->actionMutex);
@@ -1466,8 +1589,7 @@ XrResult XRAPI_CALL SyncActions(XrSession h,const XrActionsSyncInfo*info){
       auto*action=GetAction(handle);if(!action||action->type==XR_ACTION_TYPE_VIBRATION_OUTPUT)continue;
       for(uint32_t role:{kControllerLeft,kControllerRight}){
         bool applicable=ActionAllowsRole(action,role)&&ActionHasBindingForRole(action,role);
-        auto activePath=s->activeSetSubactions.find(reinterpret_cast<XrActionSet>(set));
-        if(activePath!=s->activeSetSubactions.end()&&activePath->second!=XR_NULL_PATH&&RoleForPath(s->instance,activePath->second)!=role)applicable=false;
+        if(!ActionSetRoleIsActive(s,set,role))applicable=false;
         if(applicable)UpdateActionSnapshot(action,role,role==kControllerLeft?s->controllers.left:s->controllers.right);
       }
     }
@@ -1484,14 +1606,13 @@ XrResult GetActionSnapshot(Session*s,const XrActionStateGetInfo*info,XrActionTyp
       std::find(action->subactionPaths.begin(),action->subactionPaths.end(),info->subactionPath)==action->subactionPaths.end())return XR_ERROR_PATH_UNSUPPORTED;
   std::lock_guard<std::recursive_mutex> actionLock(s->actionMutex);
   const bool setActive=s->state==XR_SESSION_STATE_FOCUSED&&ActionSetIsActive(s,action->set);
-  auto activePath=s->activeSetSubactions.find(reinterpret_cast<XrActionSet>(action->set));
   const uint32_t requestedRole=info->subactionPath==XR_NULL_PATH?UINT32_MAX:RoleForPath(s->instance,info->subactionPath);
   if(info->subactionPath!=XR_NULL_PATH&&requestedRole==UINT32_MAX)return XR_ERROR_PATH_UNSUPPORTED;
   active=false;
   for(uint32_t role:{kControllerLeft,kControllerRight}){
     if(requestedRole!=UINT32_MAX&&requestedRole!=role)continue;
     if(!ActionAllowsRole(action,role)||!ActionHasBindingForRole(action,role))continue;
-    if(activePath!=s->activeSetSubactions.end()&&activePath->second!=XR_NULL_PATH&&RoleForPath(s->instance,activePath->second)!=role)continue;
+    if(!ActionSetRoleIsActive(s,action->set,role))continue;
     const auto&controller=role==kControllerLeft?s->controllers.left:s->controllers.right;
     if(!setActive||!ControllerConnected(controller))continue;
     auto found=action->values.find(role);

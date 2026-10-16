@@ -16,7 +16,39 @@ for ARCH in aarch64-windows arm64ec-windows; do
     fi
   done
 done
-echo "Wine bootstrap bundle verified (both architectures, matching runtime files)."
+
+# Native ntdll's data_dir is the executable directory. Missing locale/case
+# tables cause a null-table read during environment initialization, before the
+# guest can create a window. Verify all packaged tables at that actual path.
+for FILE in normnfc.nls locale.nls l_intl.nls; do
+  if [[ ! -s "$APP/Runtime/nls/$FILE" ]]; then
+    echo "error: Missing required runtime NLS table: $FILE" >&2
+    exit 1
+  fi
+done
+for RUNTIME in "$APP"/Runtime/nls/*.nls; do
+  LOADER="$APP/nls/$(basename "$RUNTIME")"
+  if [[ ! -s "$LOADER" ]] || ! cmp -s "$LOADER" "$RUNTIME"; then
+    echo "error: Missing or mismatched Wine loader NLS table: $LOADER" >&2
+    exit 1
+  fi
+done
+for FILE in tahoma.ttf tahomabd.ttf ms_sans_serif.ttf system.ttf; do
+  if [[ ! -s "$APP/fonts/$FILE" ]]; then
+    echo "error: Missing Wine UI font at loader data path: $APP/fonts/$FILE" >&2
+    exit 1
+  fi
+done
+for FILE in crypt32.dll cryptbase.dll rsaenh.dll psapi.dll imm32.dll; do
+  if [[ ! -s "$APP/Runtime/arm64ec-windows/$FILE" ]]; then
+    echo "error: Missing Wine CryptoAPI provider dependency: $FILE" >&2
+    exit 1
+  fi
+done
+echo "Wine bootstrap bundle verified (both architectures, matching NLS and required UI fonts)."
+if [[ -f "$APP/Runtime/AVPPLAY_GUEST_BUILD_RECEIPT.json" ]]; then
+  python3 "$(dirname "$0")/verify_wine_imports.py" "$APP/Runtime/arm64ec-windows"
+fi
 
 # Modern DXMT shares its validated DLL closure across D3D11 and D3D12.
 if [[ -f "$APP/WindowsVR/GraphicsCapabilities.json" || -f "$APP/WindowsVR/D3D12Experimental/AVPPLAY_DXMT_D3D12_PROFILE.json" ]]; then

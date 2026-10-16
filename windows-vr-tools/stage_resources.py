@@ -26,6 +26,15 @@ REQUIRED_BUILTINS = {
 ARM64EC_REQUIRED_BUILTINS = {
     # Required by Madeira's freshly built ARM64EC FEX translator.
     "xtajit64.dll", "libc++.dll", "libunwind.dll",
+    # CryptoAPI's RSA/AES provider is needed to verify the Valve client before
+    # Steam starts. ARM64 files cannot satisfy ARM64EC/x64 imports.
+    "crypt32.dll", "cryptbase.dll", "rsaenh.dll", "psapi.dll",
+    # Direct/delay imports of the packaged core Wine DLLs.
+    "cabinet.dll", "comctl32.dll", "comdlg32.dll", "cryptnet.dll", "cryptui.dll",
+    "d3dcompiler_47.dll", "dhcpcsvc.dll", "dinput8.dll", "gdiplus.dll", "imm32.dll",
+    "jsproxy.dll", "mfplat.dll", "mfreadwrite.dll", "mlang.dll", "netapi32.dll",
+    "nsi.dll", "oleaut32.dll", "propsys.dll", "shdocvw.dll", "urlmon.dll",
+    "windowscodecs.dll", "winspool.drv", "wintrust.dll",
 }
 FORBIDDEN = ("steamclient", "codex", "test", "probe", "canary", "hello", "triangle", "cube", "thumper")
 MAX_ARCHIVE_MEMBERS = 250_000
@@ -463,7 +472,7 @@ def validate_wine_resources(source):
                 if not is_arm64ec_pe(path):
                     fail(f"ARM64EC runtime farm requires ARM64EC PE files: {path}")
         for name, path in names.items():
-            if (path.suffix.casefold() == ".dll" or name in WINE_TOOLS) and any(term in name for term in FORBIDDEN):
+            if (path.suffix.casefold() in (".dll", ".drv") or name in WINE_TOOLS) and any(term in name for term in FORBIDDEN):
                 fail(f"Wine builtin farm contains an excluded test/game resource: {path}")
 
 
@@ -473,7 +482,7 @@ def copy_builtins(source, destination):
         farm_output.mkdir()
         for path in (source / farm).iterdir():
             name = path.name.casefold()
-            if path.suffix.casefold() == ".dll" or name in WINE_TOOLS:
+            if path.suffix.casefold() in (".dll", ".drv") or name in WINE_TOOLS:
                 shutil.copy2(path, farm_output / path.name)
         names = {path.name.casefold() for path in farm_output.iterdir()}
         missing = sorted(REQUIRED_BUILTINS - names)

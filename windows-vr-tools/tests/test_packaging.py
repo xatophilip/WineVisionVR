@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sanitize_prefix_snapshot as sanitizer
 import stage_resources as stage
+import resource_receipt as receipt
 from verify_source_checkout import verify_source_checkout
 
 
@@ -146,6 +147,30 @@ class PrefixTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 sanitizer.sanitize(self.source, output, receipt)
         self.assertEqual(output.read_bytes(), b"other writer")
+
+
+class DriverPackagingTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name)
+        self.source = self.root / "source"
+        for name in ("aarch64-windows", "arm64ec-windows", "nls", "legal"):
+            (self.source / name).mkdir(parents=True)
+        (self.source / "arm64ec-windows/winspool.drv").write_bytes(b"PE driver fixture")
+
+    def test_guest_receipt_hashes_driver_modules(self):
+        files = receipt.guest_resource_files(self.source)
+        self.assertEqual(files["arm64ec-windows/winspool.drv"],
+                         receipt.sha256_file(self.source / "arm64ec-windows/winspool.drv"))
+
+    def test_stage_keeps_required_driver_module(self):
+        destination = self.root / "stage"
+        destination.mkdir()
+        with patch.object(stage, "REQUIRED_BUILTINS", set()), \
+             patch.object(stage, "ARM64EC_REQUIRED_BUILTINS", {"winspool.drv"}):
+            stage.copy_builtins(self.source, destination)
+        self.assertEqual((destination / "arm64ec-windows/winspool.drv").read_bytes(), b"PE driver fixture")
 
 
 class SourcePinTests(unittest.TestCase):

@@ -33,6 +33,7 @@
 // DXMT archive. A resource marker cannot turn a baseline archive into D3D12.
 extern "C" size_t wvr_dxmt_d3d12_unix_call_count_v1(void) __attribute__((weak_import));
 extern "C" uint32_t wvr_dxmt_d3d12_transport_abi_v1(void) __attribute__((weak_import));
+extern "C" void winios_post_key(int virtualKey, int down);
 
 extern "C" __attribute__((visibility("default")))
 const uint32_t windows_vr_runtime_abi_version = WINDOWS_VR_RUNTIME_ABI_VERSION;
@@ -54,17 +55,24 @@ struct LaunchRequest {
     std::string gameID;
     std::string backend;
     std::string graphics;
+    std::string presentation = "immersiveVR";
     std::string gameDirectory;
     std::string executablePath;
     std::vector<std::string> arguments;
     std::vector<std::pair<std::string, std::string>> environment;
 };
 
+bool PresentationIsReady(const LaunchRequest &request, const WVRCompositorReadinessV1 &readiness) {
+    return readiness.metalDeviceBound &&
+        (request.presentation == "desktop" || readiness.stereoTargetsPublished);
+}
+
 std::mutex g_mutex;
 std::atomic<RuntimeState> g_state{RuntimeState::idle};
 std::atomic<bool> g_launchConsumed{false};
 std::atomic<bool> g_stopRequested{false};
 std::string g_lastError;
+bool g_desktopSession = false; // accessed under g_mutex
 // The Wine bridge uses the process environment. Restore host values on every
 // startup failure and natural exit rather than deleting inherited settings.
 std::map<std::string, std::optional<std::string>> g_originalEnvironment;
@@ -259,6 +267,26 @@ bool IsAllowedEnvironmentKey(const std::string &key) {
            !starts("MADEIRA_");
 }
 
+// OpenComposite writes applist.json and apps-config.json beside its client DLL.
+// The signed bundle cannot host those writes; each launch gets a private copy.
+bool CopyGuestOpenComposite(NSString *source, NSString *destination, std::string &error) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSError *fsError = nil;
+    if (![fm copyItemAtPath:source toPath:destination error:&fsError]) {
+        error = fsError.localizedDescription.UTF8String ?: "Could not copy the guest OpenComposite runtime.";
+        return false;
+    }
+    // Packaging may leave resource folders read-only. Keep the DLL bytes intact
+    // while making the private settings directories writable by their owner.
+    for (NSString *directory in @[destination, [destination stringByAppendingPathComponent:@"bin"]]) {
+        if (![fm setAttributes:@{NSFilePosixPermissions: @0700} ofItemAtPath:directory error:&fsError]) {
+            error = fsError.localizedDescription.UTF8String ?: "Could not prepare writable OpenComposite settings.";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool InstallGuestOpenXRRuntime(uint16_t machine, bool gameARM64EC, NSString *driveC, std::string &runtimeABI,
                                LaunchScope &scope, std::string &error) {
     // OpenComposite currently ships only an x64 guest build. ARM64EC is a
@@ -329,8 +357,11 @@ bool InstallGuestOpenXRRuntime(uint16_t machine, bool gameARM64EC, NSString *dri
         error = "The private guest OpenXR runtime destination already exists; refusing to replace it.";
         return false;
     }
-    if (![fm createSymbolicLinkAtPath:guestOpenComposite withDestinationPath:openComposite error:&fsError] ||
-        ![fm createSymbolicLinkAtPath:guestRuntimeDLL withDestinationPath:runtimeDLL error:&fsError]) {
+    if (!CopyGuestOpenComposite(openComposite, guestOpenComposite, error)) {
+        [fm removeItemAtPath:guestRuntime error:nil];
+        return false;
+    }
+    if (![fm createSymbolicLinkAtPath:guestRuntimeDLL withDestinationPath:runtimeDLL error:&fsError]) {
         [fm removeItemAtPath:guestRuntime error:nil];
         error = fsError.localizedDescription.UTF8String ?: "Could not map the app-bundled guest OpenXR runtime into the Wine prefix.";
         return false;
@@ -384,6 +415,14 @@ bool ParseRequest(const char *json, LaunchRequest &request, std::string &error) 
         return false;
     }
     NSDictionary *dict = object;
+    if (dict[@"presentation"] && !ReadString(dict, @"presentation", request.presentation)) {
+        error = "Presentation must be immersiveVR or desktop.";
+        return false;
+    }
+    if (request.presentation != "immersiveVR" && request.presentation != "desktop") {
+        error = "Unsupported presentation mode.";
+        return false;
+    }
     NSNumber *schema = dict[@"schemaVersion"];
     if (![schema isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)schema) == CFBooleanGetTypeID() || schema.doubleValue != 1.0 ||
         !ReadString(dict, @"backend", request.backend) ||
@@ -599,7 +638,7 @@ int32_t PreflightRequest(LaunchRequest &request, std::string &error) {
             return ENOENT;
         }
     }
-    for (NSString *path in @[@"WindowsVR/Guest/x64/OpenComposite/bin/vrclient_x64.dll", @"WindowsVR/Guest/x64/wvr_openxr.dll"]) {
+    if (request.presentation == "immersiveVR") for (NSString *path in @[@"WindowsVR/Guest/x64/OpenComposite/bin/vrclient_x64.dll", @"WindowsVR/Guest/x64/wvr_openxr.dll"]) {
         NSString *resourcePath = [resources URLByAppendingPathComponent:path].path;
         NSDictionary *attributes = [fm attributesOfItemAtPath:resourcePath error:nil];
         uint16_t guestMachine = 0;
@@ -708,13 +747,16 @@ int32_t RunRequest(LaunchRequest request) {
     compositorReadiness.abiVersion = WVR_COMPOSITOR_ABI_VERSION;
     compositorReadiness.structSize = sizeof(compositorReadiness);
     if (wvr_compositor_copy_readiness_v1(&compositorReadiness) != WVRCompositorStatusOK ||
-        !compositorReadiness.metalDeviceBound || !compositorReadiness.stereoTargetsPublished) {
-        SetError("The immersive compositor must publish its Metal device and stereo targets before Wine starts.");
+        !PresentationIsReady(request, compositorReadiness)) {
+        SetError(request.presentation == "desktop"
+            ? "The desktop surface must bind its Metal device before Wine starts."
+            : "The immersive compositor must publish its Metal device and stereo targets before Wine starts.");
         return -1;
     }
     std::string runtimeABI;
     std::string runtimeError;
-    if (!InstallGuestOpenXRRuntime(machine, gameARM64EC, driveC, runtimeABI, scope, runtimeError)) {
+    if (request.presentation == "immersiveVR" &&
+        !InstallGuestOpenXRRuntime(machine, gameARM64EC, driveC, runtimeABI, scope, runtimeError)) {
         SetError(runtimeError);
         return -1;
     }
@@ -795,6 +837,13 @@ int32_t RunRequest(LaunchRequest request) {
         SetLaunchEnvironment("MADEIRA_JIT_WRITE_OFFSET", nullptr);
     }
     SetLaunchEnvironment("MADEIRA_USE_ARM64EC", nativeARM64 ? "0" : "1");
+    SetLaunchEnvironment("MADEIRA_DESKTOP", request.presentation == "desktop" ? "1" : "0");
+    if (request.presentation == "desktop") {
+        SetLaunchEnvironment("VR_OVERRIDE", nullptr);
+        SetLaunchEnvironment("XR_RUNTIME_JSON", nullptr);
+    }
+    // Desktop and VR both bind the exact device through the bridge; only VR
+    // additionally requires stereo targets and a tracked head pose.
     SetLaunchEnvironment("WVR_REQUIRE_COMPOSITOR_DEVICE", "1");
     SetLaunchEnvironment("WVR_GRAPHICS_API", request.graphics.c_str());
     SetLaunchEnvironment("WINEDLLOVERRIDES", "d3d11,d3d12,dxgi,winemetal=b");
@@ -907,6 +956,7 @@ windows_vr_launch_v1(const char *request_json) {
         return EALREADY;
     }
     g_lastError.clear();
+    g_desktopSession = request.presentation == "desktop";
     g_stopRequested.store(false, std::memory_order_release);
     wvr_compositor_reset_session_exit_v1();
     g_state.store(RuntimeState::preparing, std::memory_order_release);
@@ -942,9 +992,20 @@ windows_vr_stop_v1(void) {
     if (wine_process_is_running() || state == RuntimeState::running || state == RuntimeState::launchingWine ||
         state == RuntimeState::startingWineServer || state == RuntimeState::preparing || state == RuntimeState::stopping) {
         g_stopRequested.store(true, std::memory_order_release);
-        wvr_compositor_request_session_exit_v1();
+        if (g_desktopSession && wine_process_is_running()) {
+            // Ordinary desktop applications receive a cooperative Alt-F4. They
+            // may display a save prompt, so the host keeps the screen/input live.
+            winios_post_key(0x12, 1);
+            winios_post_key(0x73, 1);
+            winios_post_key(0x73, 0);
+            winios_post_key(0x12, 0);
+        } else if (!g_desktopSession) {
+            wvr_compositor_request_session_exit_v1();
+        }
         if (wine_process_is_running()) g_state.store(RuntimeState::stopping, std::memory_order_release);
-        g_lastError = "Cooperative exit requested. Waiting for the OpenXR guest and Wine process to exit; no thread was forcibly terminated.";
+        g_lastError = g_desktopSession
+            ? "Desktop close requested. Complete any save prompt in Windows; the session stays active until Wine exits."
+            : "Cooperative exit requested. Waiting for the OpenXR guest and Wine process to exit; no thread was forcibly terminated.";
         return EINPROGRESS;
     }
     return 0;
@@ -966,6 +1027,11 @@ windows_vr_graphics_capabilities_v1(void) {
             return IsModernDXMTNativeProfile() && HasD3D12Package() ? (WINDOWS_VR_GRAPHICS_D3D11 | WINDOWS_VR_GRAPHICS_D3D12) : 0u;
         return WINDOWS_VR_GRAPHICS_D3D11;
     }
+}
+
+extern "C" __attribute__((visibility("default"))) uint32_t
+windows_vr_presentation_capabilities_v1(void) {
+    return 3u; // immersive VR and the app-hosted Windows desktop
 }
 
 extern "C" __attribute__((visibility("default"))) uint64_t

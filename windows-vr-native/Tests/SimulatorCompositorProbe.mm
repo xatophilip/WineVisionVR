@@ -119,6 +119,11 @@ int main() { @autoreleasepool {
     renderPose.structSize=sizeof(renderPose);
     require(wvr_compositor_copy_lease_tracking_v1(arrayAcquired.lease,&renderPose)==WVRCompositorStatusNoFrameAvailable, "missing render pose is not fabricated from latest tracking");
     wvr_compositor_release_acquired_frame_v1(arrayAcquired.lease);
+    require(wvr_compositor_publish_targets_v1(1888,1792,MTLPixelFormatRGBA8Unorm_sRGB,1888,1792,MTLPixelFormatRGBA8Unorm_sRGB)==0, "publish Unity producer geometry");
+    WVRRenderTargetInfoV1 padded{}; padded.structSize=sizeof(padded);
+    require(wvr_compositor_copy_targets_v1(&padded)==0 && padded.width[0]==1920 && padded.height[0]==1792, "producer eyes align to 64 pixels without changing view metadata");
+    require(wvr_compositor_set_render_scale_v1(0.7f)==0 && wvr_compositor_copy_targets_v1(&padded)==0 && padded.width[0]==1344 && padded.height[0]==1280, "render scale retains padded allocation contract");
+    require(wvr_compositor_set_render_scale_v1(1.0f)==0 && wvr_compositor_copy_targets_v1(&padded)==0 && padded.width[0]==1920, "full render scale restores aligned producer geometry");
     std::puts("SIMULATOR COMPOSITOR CHECKS PASSED");
     return 0;
 } }

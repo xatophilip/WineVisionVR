@@ -30,33 +30,39 @@ preamble = r'''
 constexpr uint32_t kControllerLeft=0,kControllerRight=1;
 struct Instance;struct Action;
 struct ActionValue {bool boolean=false;float scalar=0;XrVector2f vector{};XrTime lastChangeTime=0;bool changed=false;};
-struct ActionSet {Instance* instance;};
+struct ActionSet {Instance* instance;std::vector<XrAction> actions;bool bindingsAttached=false;};
 struct Action {std::string name;ActionSet* set;XrActionType type;std::vector<XrPath> subactionPaths,bindingPaths;std::unordered_map<uint32_t,ActionValue> values;};
-struct Instance {std::mutex mutex;std::unordered_map<std::string,XrPath> paths;std::unordered_map<XrPath,std::string> pathStrings;std::vector<std::unique_ptr<Action>> actions;std::unordered_map<XrPath,XrPath> interactionProfiles;std::unordered_map<XrPath,XrAction> bindings;std::unordered_map<XrPath,std::vector<XrActionSuggestedBinding>> profileBindings;XrPath selectedProfile=XR_NULL_PATH;int selectedProfilePriority=-1;bool bindingsAttached=false;uint64_t nextPath=1;};
+struct Instance {std::mutex mutex;std::unordered_map<std::string,XrPath> paths;std::unordered_map<XrPath,std::string> pathStrings;std::vector<std::unique_ptr<Action>> actions;std::vector<std::unique_ptr<ActionSet>> actionSets;std::unordered_map<XrPath,XrPath> interactionProfiles;std::unordered_map<XrPath,XrAction> bindings;std::unordered_map<XrPath,std::vector<XrActionSuggestedBinding>> profileBindings;XrPath selectedProfile=XR_NULL_PATH;int selectedProfilePriority=-1;uint64_t nextPath=1;};
 struct WVRDXMTControllerV1 {uint64_t buttons=0,timestampNanoseconds=0;uint32_t flags=7;float trigger=0,grip=0,thumbstickX=0,thumbstickY=0;};
 struct ControllerSample {WVRDXMTControllerV1 left{},right{};};
-struct Session {Instance* instance;std::atomic<XrSessionState> state{XR_SESSION_STATE_FOCUSED};std::recursive_mutex actionMutex;bool actionSetsAttached=true;std::vector<XrActionSet> activeActionSets;std::unordered_map<XrActionSet,XrPath> activeSetSubactions;ControllerSample controllers;};
+struct Session {Instance* instance;std::atomic<XrSessionState> state{XR_SESSION_STATE_FOCUSED};std::recursive_mutex actionMutex;std::mutex eventMutex;bool interactionProfileChanged=false;bool begun=true;bool actionSetsAttached=true;std::vector<XrActionSet> attachedActionSets,activeActionSets;std::unordered_map<XrActionSet,uint32_t> activeSetSubactions;ControllerSample controllers;};
 Instance* GetInstance(XrInstance h){return reinterpret_cast<Instance*>(h);}
 Action* GetAction(XrAction h){return reinterpret_cast<Action*>(h);}
+ActionSet* GetActionSet(XrActionSet h){return reinterpret_cast<ActionSet*>(h);}
 void TraceLine(const char*){}
 struct WVRDXMTHapticV1 {uint32_t role;float amplitude,frequencyHz,durationSeconds;};
 std::vector<WVRDXMTHapticV1> sentHaptics;
 Session* GetSession(XrSession h){return reinterpret_cast<Session*>(h);}
 int SubmitSessionHaptic(Session*,const WVRDXMTHapticV1* request){sentHaptics.push_back(*request);return 0;}
+ControllerSample sampledControllers;
+bool failControllerRead=false;
+unsigned observeCalls=0;
+void ObserveSessionExitRequest(Session*){++observeCalls;}
+int GetSessionController(Session*,uint32_t role,WVRDXMTControllerV1* out){if(failControllerRead)return -1;*out=role==0?sampledControllers.left:sampledControllers.right;return 0;}
 #define FAILED(result) ((result)<0)
 uint64_t ButtonForBinding(const std::string&);
 '''
 functions = [function(x) for x in [
     'bool AnalogBinding(', 'uint32_t RoleForPath(', 'XrPath UserPathForRole(', 'bool ActionAllowsRole(',
     'bool ActionHasBindingForRole(', 'uint64_t ButtonForBinding(const std::string &binding) {',
-    'ActionValue SampleAction(', 'void UpdateActionSnapshot(', 'bool ControllerConnected(', 'bool ActionSetIsActive(', 'XrResult GetActionSnapshot(',
-    'XrResult XRAPI_CALL SuggestInteractionProfileBindings(',
+    'ActionValue SampleAction(', 'void UpdateActionSnapshot(', 'bool ControllerConnected(', 'bool ActionSetIsActive(', 'bool ActionSetRoleIsActive(', 'XrResult XRAPI_CALL SyncActions(', 'XrResult GetActionSnapshot(',
+    'XrResult XRAPI_CALL SuggestInteractionProfileBindings(', 'XrResult XRAPI_CALL AttachSessionActionSets(',
     'XrResult XRAPI_CALL ApplyHapticFeedback(', 'XrResult XRAPI_CALL StopHapticFeedback(']]
 tests = r'''
 int main(){
- Instance i;ActionSet set{&i};
+ Instance i;i.actionSets.push_back(std::make_unique<ActionSet>());ActionSet& set=*i.actionSets.back();set.instance=&i;
  auto path=[&](const std::string& name){auto found=i.paths.find(name);if(found!=i.paths.end())return found->second;auto p=i.nextPath++;i.paths[name]=p;i.pathStrings[p]=name;return p;};
- auto action=[&](XrActionType type){auto a=std::make_unique<Action>();a->set=&set;a->type=type;auto raw=a.get();i.actions.push_back(std::move(a));return raw;};
+ auto action=[&](XrActionType type){auto a=std::make_unique<Action>();a->set=&set;a->type=type;auto raw=a.get();i.actions.push_back(std::move(a));set.actions.push_back(reinterpret_cast<XrAction>(raw));return raw;};
  WVRDXMTControllerV1 c;c.buttons=3;c.trigger=.8f;c.grip=.7f;c.thumbstickX=-.6f;c.thumbstickY=.4f;
  auto a=action(XR_ACTION_TYPE_BOOLEAN_INPUT);
  for(auto name:{"x/click","y/click","a/click","b/click","trigger/value","squeeze/value","trigger","squeeze","grip"}){
@@ -81,8 +87,39 @@ int main(){
  const auto select=path("/user/hand/left/input/select/click");XrActionSuggestedBinding fallback{reinterpret_cast<XrAction>(a),select};info.interactionProfile=simple;info.countSuggestedBindings=1;info.suggestedBindings=&fallback;
  assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_SUCCESS);
  assert(i.selectedProfile==touch);assert(a->bindingPaths[0]==squeeze);
- i.bindingsAttached=true;assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_ERROR_ACTIONSETS_ALREADY_ATTACHED);
- Session session;session.instance=&i;session.activeActionSets={reinterpret_cast<XrActionSet>(&set)};
+ Session attachment;attachment.instance=&i;attachment.actionSetsAttached=false;
+ const auto originalSetHandle=reinterpret_cast<XrActionSet>(&set);
+ XrActionSet attachHandles[]={originalSetHandle,XR_NULL_HANDLE};
+ XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};attach.countActionSets=2;attach.actionSets=attachHandles;
+ auto attachmentHandle=reinterpret_cast<XrSession>(&attachment);
+ assert(AttachSessionActionSets(attachmentHandle,&attach)==XR_ERROR_HANDLE_INVALID);
+ assert(!attachment.actionSetsAttached&&attachment.attachedActionSets.empty()&&!set.bindingsAttached);
+ attachHandles[1]=originalSetHandle;
+ assert(AttachSessionActionSets(attachmentHandle,&attach)==XR_ERROR_VALIDATION_FAILURE);
+ assert(!attachment.actionSetsAttached&&attachment.attachedActionSets.empty()&&!set.bindingsAttached);
+ attach.countActionSets=1;
+ assert(AttachSessionActionSets(attachmentHandle,&attach)==XR_SUCCESS);
+ assert(set.bindingsAttached&&attachment.actionSetsAttached);
+ assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_ERROR_ACTIONSETS_ALREADY_ATTACHED);
+ // Unrelated new sets can suggest bindings even while the original session exists.
+ ActionSet freshSet{&i};auto fresh=std::make_unique<Action>();fresh->set=&freshSet;fresh->type=XR_ACTION_TYPE_BOOLEAN_INPUT;
+ const auto freshHandle=reinterpret_cast<XrAction>(fresh.get());freshSet.actions.push_back(freshHandle);i.actions.push_back(std::move(fresh));
+ XrActionSuggestedBinding freshBinding{freshHandle,select};info.suggestedBindings=&freshBinding;
+ assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_SUCCESS);
+ // Session destruction never unfreezes a previously attached set. A replacement
+ // session can attach a fresh set; invalid multi-set calls do not freeze it early.
+ attachment.attachedActionSets.clear();attachment.actionSetsAttached=false;
+ info.suggestedBindings=&fallback;
+ assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_ERROR_ACTIONSETS_ALREADY_ATTACHED);
+ info.suggestedBindings=&freshBinding;assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_SUCCESS);
+ Session replacement;replacement.instance=&i;replacement.actionSetsAttached=false;
+ const auto freshSetHandle=reinterpret_cast<XrActionSet>(&freshSet);attach.actionSets=&freshSetHandle;
+ assert(AttachSessionActionSets(reinterpret_cast<XrSession>(&replacement),&attach)==XR_SUCCESS);
+ assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_ERROR_ACTIONSETS_ALREADY_ATTACHED);
+ // Empty suggestions reference no sets and may replace an existing profile.
+ info.countSuggestedBindings=0;info.suggestedBindings=nullptr;
+ assert(SuggestInteractionProfileBindings(reinterpret_cast<XrInstance>(&i),&info)==XR_SUCCESS);
+ Session session;session.instance=&i;session.activeActionSets={reinterpret_cast<XrActionSet>(&set)};session.attachedActionSets=session.activeActionSets;session.activeSetSubactions[session.activeActionSets[0]]=3;
  auto triggerAction=action(XR_ACTION_TYPE_FLOAT_INPUT);
  auto left=UserPathForRole(&i,0),right=UserPathForRole(&i,1);
  triggerAction->subactionPaths={left,right};triggerAction->bindingPaths={path("/user/hand/right/input/trigger/value")};
@@ -134,12 +171,76 @@ int main(){
  sentHaptics.clear();pulse.amplitude=2;
  assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_VALIDATION_FAILURE);
  assert(sentHaptics.empty());
- puts("PASS: production input values, hand isolation, change detection, shared-source actions, profile selection, menus, haptic routing/stop/duration and attachment contract");
+
+ // Execute production SyncActions, including OpenComposite's two-hand list.
+ const auto setHandle=reinterpret_cast<XrActionSet>(&set);
+ XrActiveActionSet both[]={{setHandle,left},{setHandle,right}};
+ XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};sync.countActiveActionSets=2;sync.activeActionSets=both;
+ sampledControllers.left.trigger=.2f;sampledControllers.right.trigger=.9f;
+ triggerAction->bindingPaths={path("/user/hand/left/input/trigger/value"),path("/user/hand/right/input/trigger/value")};
+ assert(SyncActions(sessionHandle,&sync)==XR_SUCCESS);
+ assert(session.activeActionSets.size()==1&&session.activeSetSubactions.at(setHandle)==3);
+ auto readTrigger=[&](XrPath hand,float expected,bool expectedActive){
+   get.action=reinterpret_cast<XrAction>(triggerAction);get.subactionPath=hand;result={};
+   assert(GetActionSnapshot(&session,&get,XR_ACTION_TYPE_FLOAT_INPUT,actual,result,active)==XR_SUCCESS);
+   assert(active==expectedActive&&result.scalar==expected);
+ };
+ readTrigger(left,.2f,true);readTrigger(right,.9f,true);readTrigger(XR_NULL_PATH,.9f,true);
+ sync.countActiveActionSets=1;
+ assert(SyncActions(sessionHandle,&sync)==XR_SUCCESS);
+ assert(ActionSetRoleIsActive(&session,&set,0)&&!ActionSetRoleIsActive(&session,&set,1));
+ readTrigger(left,.2f,true);readTrigger(right,0,false);readTrigger(XR_NULL_PATH,.2f,true);
+ // Identical pairs are idempotent; wildcard unions do not depend on order.
+ both[1]=both[0];sync.countActiveActionSets=2;
+ assert(SyncActions(sessionHandle,&sync)==XR_SUCCESS&&session.activeSetSubactions.at(setHandle)==1);
+ for(bool wildcardFirst:{false,true}){
+   both[wildcardFirst?0:1]={setHandle,XR_NULL_PATH};both[wildcardFirst?1:0]={setHandle,left};
+   assert(SyncActions(sessionHandle,&sync)==XR_SUCCESS&&session.activeSetSubactions.at(setHandle)==3);
+   readTrigger(right,.9f,true);
+ }
+ auto savedMask=session.activeSetSubactions;
+ auto savedSets=session.activeActionSets;
+ const float savedTrigger=session.controllers.right.trigger;
+ const auto savedValues=triggerAction->values;
+ unsigned savedObserve=observeCalls;
+ auto unchanged=[&]{assert(session.activeSetSubactions==savedMask&&session.activeActionSets==savedSets&&session.controllers.right.trigger==savedTrigger&&triggerAction->values.at(1).scalar==savedValues.at(1).scalar&&observeCalls==savedObserve);};
+ both[0]={setHandle,left};both[1]={XR_NULL_HANDLE,right};
+ assert(SyncActions(sessionHandle,&sync)==XR_ERROR_HANDLE_INVALID);unchanged();
+ ActionSet unattached{&i};both[1]={reinterpret_cast<XrActionSet>(&unattached),right};
+ assert(SyncActions(sessionHandle,&sync)==XR_ERROR_ACTIONSET_NOT_ATTACHED);unchanged();
+ Instance foreignInstance;ActionSet foreign{&foreignInstance};both[1]={reinterpret_cast<XrActionSet>(&foreign),right};
+ assert(SyncActions(sessionHandle,&sync)==XR_ERROR_HANDLE_INVALID);unchanged();
+ both[1]={setHandle,path("/user/head")};assert(SyncActions(sessionHandle,&sync)==XR_ERROR_PATH_UNSUPPORTED);unchanged();
+ // A recognized hand path still must be declared by some action in this set.
+ auto undeclared=std::make_unique<ActionSet>();undeclared->instance=&i;auto undeclaredHandle=reinterpret_cast<XrActionSet>(undeclared.get());
+ session.attachedActionSets.push_back(undeclaredHandle);i.actionSets.push_back(std::move(undeclared));
+ both[1]={undeclaredHandle,right};assert(SyncActions(sessionHandle,&sync)==XR_ERROR_PATH_UNSUPPORTED);unchanged();
+ both[1]={setHandle,right};failControllerRead=true;
+ assert(SyncActions(sessionHandle,&sync)==XR_ERROR_RUNTIME_FAILURE);
+ assert(session.activeSetSubactions==savedMask&&session.controllers.right.trigger==savedTrigger);
+ failControllerRead=false;
+ sync.countActiveActionSets=0;sync.activeActionSets=nullptr;
+ assert(SyncActions(sessionHandle,&sync)==XR_SUCCESS&&session.activeActionSets.empty()&&session.activeSetSubactions.empty());
+ readTrigger(right,0,false);
+ sync.countActiveActionSets=2;sync.activeActionSets=both;
+ session.state=XR_SESSION_STATE_VISIBLE;
+ assert(SyncActions(sessionHandle,&sync)==XR_SESSION_NOT_FOCUSED&&session.activeSetSubactions.empty());
+ readTrigger(left,0,false);session.state=XR_SESSION_STATE_FOCUSED;
+ assert(SyncActions(sessionHandle,&sync)==XR_SUCCESS);
+ // Both-hand activation must not broaden an explicitly single-hand haptic request.
+ sentHaptics.clear();pulse.amplitude=.7f;hapticInfo.subactionPath=left;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_SUCCESS);
+ assert(sentHaptics.size()==1&&sentHaptics[0].role==0);
+ sentHaptics.clear();hapticInfo.subactionPath=right;
+ assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_SUCCESS);
+ assert(sentHaptics.size()==1&&sentHaptics[0].role==1);
+
+ puts("PASS: production input values, multi-hand synchronization, duplicate/wildcard union, transactional validation, focus, hand isolation, profiles, menus and haptic routing");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wvr-input-') as work:
     cpp = Path(work)/'test.cpp'
     cpp.write_text(preamble+'\n'.join(functions)+tests)
     exe = Path(work)/'test'
-    subprocess.run(['clang++','-std=c++20','-I',str(root/'third-party/openxr/include'),str(cpp),'-o',str(exe)],check=True)
+    subprocess.run(['clang++','-std=c++20','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I',str(root/'third-party/openxr/include'),str(cpp),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)

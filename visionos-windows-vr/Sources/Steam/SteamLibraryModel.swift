@@ -202,12 +202,19 @@ final class SteamLibraryModel: ObservableObject {
         return FileManager.default.fileExists(atPath: folder.appendingPathComponent(relative).path)
     }
 
-    /// The launch option to start by default: Windows entries whose program is installed, VR
-    /// types first. Falls back to the first entry when nothing can be checked.
+    /// OpenComposite supplies SteamVR/OpenVR. Prefer that route over another VR
+    /// runtime (for example Oculus), even when both entries name the same file.
+    nonisolated static func preferredVRLaunchOption(_ options: [SteamLaunchOption]) -> SteamLaunchOption? {
+        options.first(where: { $0.type.lowercased() == "vr" })
+            ?? options.first(where: { $0.type.lowercased() == "othervr" })
+    }
+
+    /// The launch option to start by default: installed Windows entries, with
+    /// SteamVR first. Returns nil when no Windows executable can be found.
     nonisolated static func preferredLaunchOption(_ options: [SteamLaunchOption], game: DockGame, drive: URL) -> SteamLaunchOption? {
         let windows = options.filter { $0.oslist.isEmpty || $0.oslist.lowercased().contains("windows") }
         let present = windows.filter { isInstalled($0, game: game, drive: drive) }
-        return present.first(where: { ["vr", "othervr"].contains($0.type.lowercased()) })
+        return preferredVRLaunchOption(present)
             ?? present.first(where: { $0.type.isEmpty || $0.type == "default" })
             ?? present.first
     }
@@ -231,7 +238,7 @@ final class SteamLibraryModel: ObservableObject {
             error = nil
             let options = entry.game.launches ?? []
             let preferred = Self.preferredLaunchOption(options, game: game, drive: MadeiraDock.drive)
-                ?? options.first(where: { ["vr", "othervr"].contains($0.type.lowercased()) })
+                ?? Self.preferredVRLaunchOption(options)
                 ?? options.first(where: { $0.type.isEmpty || $0.type == "default" })
                 ?? options.first
             guard let onPlaySelected else {

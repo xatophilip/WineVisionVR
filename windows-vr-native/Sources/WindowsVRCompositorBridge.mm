@@ -193,8 +193,14 @@ void dropHeadLocked(BridgeState &bridge) {
 
 uint32_t producerExtent(uint32_t drawableExtent, float scale) {
     if (drawableExtent == 0) return 0;
-    return std::max<uint32_t>(1, static_cast<uint32_t>(
+    const uint32_t scaled = std::max<uint32_t>(1, static_cast<uint32_t>(
         std::floor(static_cast<double>(drawableExtent) * static_cast<double>(scale))));
+    // Unity pads eye buffers to tile boundaries. Advertise that allocation size
+    // so its stereo texture fits the contract; presentation scales to the view.
+    // Tiny probe/preview textures retain their exact extent.
+    if (scaled < 64) return scaled;
+    const uint64_t aligned = (static_cast<uint64_t>(scaled) + 63u) & ~uint64_t(63u);
+    return static_cast<uint32_t>(std::min<uint64_t>(aligned, UINT32_MAX));
 }
 
 void invalidateTargetsLocked(BridgeState &bridge) {

@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import WindowsVRCore
+import Darwin
 
 struct ContentView: View {
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
@@ -10,12 +11,19 @@ struct ContentView: View {
     @State private var importingGameFolder = false
     @State private var exportingReport = false
     @State private var showingSteamLibrary = false
+    @State private var didStartDesktopSmokeTest = false
     @State private var reportDocument = CompatibilityReportDocument(data: Data())
 
     var body: some View {
-        NavigationStack {
-            launcherHome
-                .navigationTitle("WineVision VR")
+        Group {
+            if model.desktopPresentationVisible {
+                WindowsDesktopView(model: model)
+            } else {
+                NavigationStack {
+                    launcherHome
+                        .navigationTitle("WineVision VR")
+                }
+            }
         }
         .sheet(isPresented: $showingSteamLibrary) {
             SteamLibraryView(model: .shared)
@@ -30,7 +38,41 @@ struct ContentView: View {
         .onChange(of: model.canChangeSelection) { _, allowed in
             SteamLibraryModel.shared.runtimeBusy = !allowed
         }
-        .task { model.refreshTransferredGames() }
+        .task {
+            model.refreshTransferredGames()
+            // Explicit developer launch argument for repeatable device testing.
+            // The normal app/library launch remains user driven.
+            if LaunchDiagnostics.enabled,
+               ProcessInfo.processInfo.arguments.contains("--vr-smoke-test"),
+               !didStartDesktopSmokeTest {
+                didStartDesktopSmokeTest = true
+                do {
+                    try model.selectVRSmoke()
+                    if ProcessInfo.processInfo.arguments.contains("--inverted-bounds") {
+                        model.launchArgumentsText = "[\"--inverted-bounds\"]"
+                    }
+                    await startLaunch()
+                } catch { model.presentLibraryError(error) }
+            } else if LaunchDiagnostics.enabled,
+               ProcessInfo.processInfo.arguments.contains("--desktop-smoke-test"),
+               !didStartDesktopSmokeTest {
+                didStartDesktopSmokeTest = true
+                do {
+                    setenv("MADEIRA_DUMP_SURFACES", "1", 1)
+                    try model.selectDesktopDemo()
+                    model.launchArgumentsText = "[\"--self-test\"]"
+                    await startLaunch()
+                } catch { model.presentLibraryError(error) }
+            } else if LaunchDiagnostics.enabled, !didStartDesktopSmokeTest,
+                      let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--steam-smoke-test=") }),
+                      let appID = Int(argument.dropFirst("--steam-smoke-test=".count)) {
+                didStartDesktopSmokeTest = true
+                do {
+                    try model.selectInstalledSteamGame(appID: appID)
+                    await startLaunch()
+                } catch { model.presentLibraryError(error) }
+            }
+        }
         .fileImporter(
             isPresented: $importingManifest,
             allowedContentTypes: [.json],
@@ -57,7 +99,8 @@ struct ContentView: View {
             Text(model.importError ?? L("The selected item could not be opened.", "Das ausgewählte Element konnte nicht geöffnet werden."))
         }
         .onChange(of: model.hasAcceptedLaunch) { _, accepted in
-            if !accepted && model.requiresRestart {
+            if model.presentationModeDraft == .immersiveVR && !accepted && model.requiresRestart {
+                model.recordLifecycleEvent("dismissImmersiveSpace: accepted=false and requiresRestart=true")
                 Task { await dismissImmersiveSpace() }
             }
         }
@@ -103,6 +146,12 @@ struct ContentView: View {
                         }
                     }
                     if model.manifest != nil {
+                        Picker(L("Display", "Anzeige"), selection: $model.presentationModeDraft) {
+                            Text(L("Immersive VR", "Immersives VR")).tag(WindowsPresentationMode.immersiveVR)
+                            Text(L("Desktop window", "Desktop-Fenster")).tag(WindowsPresentationMode.desktop)
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(!model.canChangeSelection)
                         Button { Task { await startLaunch() } } label: {
                             HStack {
                                 Spacer()
@@ -124,6 +173,9 @@ struct ContentView: View {
                             }.disabled(model.isStopping || model.stopRequested)
                         }
                     }
+                    if model.stopRequested || model.requiresRestart {
+                        ForceQuitSessionButton()
+                    }
                     if let error = model.launchError {
                         Label(error, systemImage: "exclamationmark.circle")
                             .foregroundStyle(.red)
@@ -138,6 +190,24 @@ struct ContentView: View {
                 }
                 .padding(24)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
+
+                Button {
+                    do { try model.selectVRSmoke() }
+                    catch { model.presentLibraryError(error) }
+                } label: {
+                    Label(L("Built-in VR test scene", "Integrierte VR-Testszene"), systemImage: "cube.transparent")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!model.canChangeSelection)
+
+                Button {
+                    do { try model.selectDesktopDemo() }
+                    catch { model.presentLibraryError(error) }
+                } label: {
+                    Label(L("Windows desktop test", "Windows-Desktop-Test"), systemImage: "desktopcomputer")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!model.canChangeSelection)
 
                 Button {
                     SteamLibraryModel.shared.resumeAfterLaunchFailure()
@@ -290,7 +360,7 @@ struct ContentView: View {
                             .disabled(!model.canChangeSelection)
                         Slider(value: $model.renderScaleDraft, in: 0.5...1, step: 0.05) {
                             Text(L("Spatial render scale", "Räumliche Render-Skalierung"))
-                        }.disabled(!model.canChangeSelection)
+                        }.disabled(!model.canChangeSelection || model.presentationModeDraft == .desktop)
                         LabeledContent(L("Spatial render scale", "Räumliche Render-Skalierung"), value: String(format: "%.0f%%", model.renderScaleDraft * 100))
                         Text(L("Below 100%, the guest renders smaller eyes and an ordinary Metal bilinear pass scales each eye. This is not temporal SR or DLSS.", "Unter 100 % rendert das Gastsystem kleinere Augenbilder, die anschließend mit einem gewöhnlichen bilinearen Metal-Durchlauf skaliert werden. Das ist weder temporales Super-Resolution noch DLSS."))
                             .font(.footnote).foregroundStyle(.secondary)
@@ -375,14 +445,26 @@ struct ContentView: View {
 
     @MainActor
     private func startLaunch() async {
+        let presentation = model.presentationModeDraft
         await model.launch {
-            guard case .opened = await openImmersiveSpace(id: WindowsVRCompositorScene.identifier) else {
-                throw LaunchPreparationFailure.immersiveSpaceUnavailable
+            if presentation == .desktop {
+                model.showDesktopPresentation()
+                try await model.waitForDesktopReady()
+            } else {
+                guard case .opened = await openImmersiveSpace(id: WindowsVRCompositorScene.identifier) else {
+                    throw LaunchPreparationFailure.immersiveSpaceUnavailable
+                }
+                model.immersiveSpaceDidOpen()
+                try await model.waitForCompositorReady()
             }
-            model.immersiveSpaceDidOpen()
-            try await model.waitForCompositorReady()
         }
-        if !model.hasAcceptedLaunch { await dismissImmersiveSpace() }
+        if !model.hasAcceptedLaunch {
+            if presentation == .desktop { model.hideDesktopPresentation() }
+            else {
+                model.recordLifecycleEvent("dismissImmersiveSpace: launch returned without accepted session")
+                await dismissImmersiveSpace()
+            }
+        }
     }
 }
 
@@ -405,5 +487,26 @@ private enum LaunchPreparationFailure: LocalizedError {
     case immersiveSpaceUnavailable
     var errorDescription: String? {
         L("The immersive compositor window could not be opened, so no launch request was sent.", "Das immersive Compositor-Fenster konnte nicht geöffnet werden. Es wurde keine Startanfrage gesendet.")
+    }
+}
+
+// Wine/FEX owns one session per app process. A stuck guest cannot be safely
+// reset by killing its threads; explicit process exit releases the whole session.
+struct ForceQuitSessionButton: View {
+    @State private var confirming = false
+
+    var body: some View {
+        Button(role: .destructive) { confirming = true } label: {
+            Label(L("Force quit app", "App sofort beenden"), systemImage: "xmark.circle")
+        }
+        .confirmationDialog(L("Quit WineVision VR?", "WineVision VR beenden?"),
+                            isPresented: $confirming, titleVisibility: .visible) {
+            Button(L("Force quit app", "App sofort beenden"), role: .destructive) {
+                Darwin._exit(0)
+            }
+        } message: {
+            Text(L("This closes the app immediately. Unsaved Windows work will be lost. Reopen it to start another session.",
+                   "Die App wird sofort geschlossen. Ungespeicherte Windows-Arbeit geht verloren. Öffne sie erneut für eine neue Sitzung."))
+        }
     }
 }

@@ -15,8 +15,10 @@ final class ContractsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(WindowsGameManifest.self, from: data), original)
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         json.removeValue(forKey: "environment")
+        json.removeValue(forKey: "presentation")
         let legacy = try JSONSerialization.data(withJSONObject: json)
         XCTAssertEqual(try JSONDecoder().decode(WindowsGameManifest.self, from: legacy).environment, [:])
+        XCTAssertEqual(try JSONDecoder().decode(WindowsGameManifest.self, from: legacy).presentation, .immersiveVR)
     }
 
     func testWindowsAndPOSIXPathEscapesRejected() throws {
@@ -66,6 +68,45 @@ final class ContractsTests: XCTestCase {
                                                  graphics: .direct3D11, launchArguments: [])
         profile.environment = ["WINEPREFIX": "override"]
         XCTAssertThrowsError(try profile.applying(to: manifest()))
+    }
+
+    func testDesktopModeRoundTripProfileAndLegacyCapabilities() throws {
+        let desktop = try WindowsVRLaunchProfile(name: "Desktop", backend: .windowsWineFEX,
+            graphics: .direct3D11, launchArguments: [], presentation: .desktop)
+        let applied = try desktop.applying(to: manifest())
+        XCTAssertEqual(applied.presentation, .desktop)
+        XCTAssertEqual(try JSONDecoder().decode(WindowsGameManifest.self,
+            from: JSONEncoder().encode(applied)).presentation, .desktop)
+        XCTAssertTrue(WindowsPresentationMode.immersiveVR.isSupported(by: nil))
+        XCTAssertFalse(WindowsPresentationMode.desktop.isSupported(by: nil))
+        XCTAssertFalse(WindowsPresentationMode.desktop.isSupported(by: 1))
+        XCTAssertTrue(WindowsPresentationMode.desktop.isSupported(by: 3))
+        var profileJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(desktop)) as? [String: Any])
+        profileJSON.removeValue(forKey: "presentation")
+        XCTAssertEqual(try JSONDecoder().decode(WindowsVRLaunchProfile.self,
+            from: JSONSerialization.data(withJSONObject: profileJSON)).presentation, .immersiveVR)
+        var manifestJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(applied)) as? [String: Any])
+        manifestJSON["presentation"] = "unknown-display-mode"
+        XCTAssertThrowsError(try JSONDecoder().decode(WindowsGameManifest.self,
+            from: JSONSerialization.data(withJSONObject: manifestJSON)))
+    }
+
+    func testDesktopKeyboardPrintableRangeAndHardwareKeys() {
+        for value in UInt8(32)...UInt8(126) {
+            XCTAssertNotNil(WindowsDesktopKeyboard.stroke(for: Character(UnicodeScalar(value))))
+        }
+        XCTAssertNil(WindowsDesktopKeyboard.stroke(for: "é"))
+        XCTAssertNil(WindowsDesktopKeyboard.stroke(for: "🙂"))
+        XCTAssertEqual(WindowsDesktopKeyboard.stroke(for: "A")?.key, 0x41)
+        XCTAssertEqual(WindowsDesktopKeyboard.stroke(for: "A")?.shift, true)
+        XCTAssertEqual(WindowsDesktopKeyboard.stroke(for: "a")?.shift, false)
+        XCTAssertEqual(WindowsDesktopKeyboard.stroke(for: "\\")?.key, 0xDC)
+        XCTAssertEqual(WindowsDesktopKeyboard.stroke(for: "\n")?.key, 0x0D)
+        XCTAssertEqual(WindowsDesktopKeyboard.virtualKey(hidUsage: 0x04), 0x41)
+        XCTAssertEqual(WindowsDesktopKeyboard.virtualKey(hidUsage: 0x1D), 0x5A)
+        XCTAssertEqual(WindowsDesktopKeyboard.virtualKey(hidUsage: 0x52), 0x26)
+        XCTAssertEqual(WindowsDesktopKeyboard.virtualKey(hidUsage: 0xE5), 0xA1)
+        XCTAssertNil(WindowsDesktopKeyboard.virtualKey(hidUsage: 0))
     }
 
     func testStereoEyeAssignmentAndTemporalMetadata() throws {

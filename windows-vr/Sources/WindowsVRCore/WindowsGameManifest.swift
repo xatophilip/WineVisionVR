@@ -11,6 +11,16 @@ public enum WindowsGraphicsAPI: String, Codable, Sendable, Equatable {
     case vulkan
 }
 
+public enum WindowsPresentationMode: String, Codable, Sendable, CaseIterable {
+    case immersiveVR
+    case desktop
+
+    /// Older plugins support only immersive VR. Desktop must be advertised.
+    public func isSupported(by capabilityMask: UInt32?) -> Bool {
+        (capabilityMask ?? 1) & (self == .desktop ? 2 : 1) != 0
+    }
+}
+
 public enum WindowsGameManifestError: Error, LocalizedError, Sendable, Equatable {
     case invalidExecutableRelativePath
     case unsupportedSchemaVersion(Int)
@@ -42,6 +52,7 @@ public struct WindowsGameManifest: Codable, Sendable, Equatable {
     public let graphics: WindowsGraphicsAPI
     public let launchArguments: [String]
     public let environment: [String: String]
+    public let presentation: WindowsPresentationMode
     public let schemaVersion: Int
 
     public init(
@@ -52,6 +63,7 @@ public struct WindowsGameManifest: Codable, Sendable, Equatable {
         graphics: WindowsGraphicsAPI,
         launchArguments: [String],
         environment: [String: String] = [:],
+        presentation: WindowsPresentationMode = .immersiveVR,
         schemaVersion: Int
     ) throws {
         self.id = id
@@ -61,6 +73,7 @@ public struct WindowsGameManifest: Codable, Sendable, Equatable {
         self.graphics = graphics
         self.launchArguments = launchArguments
         self.environment = environment
+        self.presentation = presentation
         self.schemaVersion = schemaVersion
         try validate()
     }
@@ -129,6 +142,7 @@ public struct WindowsGameManifest: Codable, Sendable, Equatable {
         case graphics
         case launchArguments
         case environment
+        case presentation
         case schemaVersion
     }
 
@@ -141,6 +155,7 @@ public struct WindowsGameManifest: Codable, Sendable, Equatable {
         graphics = try container.decode(WindowsGraphicsAPI.self, forKey: .graphics)
         launchArguments = try container.decode([String].self, forKey: .launchArguments)
         environment = try container.decodeIfPresent([String: String].self, forKey: .environment) ?? [:]
+        presentation = try container.decodeIfPresent(WindowsPresentationMode.self, forKey: .presentation) ?? .immersiveVR
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         try validate()
     }
@@ -154,6 +169,7 @@ public struct WindowsGameManifest: Codable, Sendable, Equatable {
         try container.encode(graphics, forKey: .graphics)
         try container.encode(launchArguments, forKey: .launchArguments)
         try container.encode(environment, forKey: .environment)
+        try container.encode(presentation, forKey: .presentation)
         try container.encode(schemaVersion, forKey: .schemaVersion)
     }
 }

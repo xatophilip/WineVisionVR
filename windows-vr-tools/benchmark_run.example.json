@@ -1,0 +1,21 @@
+{
+  "run_id": "REPLACE with a unique label, for example windlands-baseline-01",
+  "build_id": "REPLACE with commit and installed app executable SHA-256",
+  "game": "Windlands",
+  "game_version": "REPLACE with installed version or Steam build ID",
+  "scene": "REPLACE with save/checkpoint, fixed route and input actions",
+  "device_model": "REPLACE with the tested Vision Pro model",
+  "os_version": "REPLACE with the installed visionOS version/build",
+  "eye_width": null,
+  "eye_height": null,
+  "settings": {
+    "graphics_preset": "REPLACE",
+    "runtime_profile": "REPLACE",
+    "resolution_scale": "REPLACE",
+    "refresh_mode": "REPLACE"
+  },
+  "cache_state": "REPLACE with cold or warm",
+  "thermal_start": "REPLACE with observed starting thermal condition",
+  "diagnostics_enabled": true,
+  "frame_capture_enabled": false
+}

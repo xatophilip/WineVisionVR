@@ -203,6 +203,7 @@ else
 fi
 python3 "$ROOT/windows-vr-tools/stage_resources.py" "${stage_args[@]}"
 AVPPLAY_MADEIRA_STEAM_SOURCE="$source_cache/madeira" bash "$ROOT/windows-vr-tools/build_steam_dock.sh"
+bash "$ROOT/windows-vr-tools/build_desktop_demo.sh"
 
 xcodegen generate --spec "$ROOT/visionos-windows-vr/project.yml" \
     --project "$ROOT/visionos-windows-vr"
