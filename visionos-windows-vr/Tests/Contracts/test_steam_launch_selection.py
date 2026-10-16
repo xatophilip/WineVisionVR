@@ -20,7 +20,7 @@ label = 'private func optionLabel(' + view.split(
 
 launcher = (ROOT / 'Sources/LauncherModel.swift').read_text()
 compatibility = 'nonisolated static func steamCompatibilityEnvironment(' + launcher.split(
-    'nonisolated static func steamCompatibilityEnvironment(', 1)[1].split('    func selectSteamGame(', 1)[0]
+    'nonisolated static func steamCompatibilityEnvironment(', 1)[1].split('    /// Steam\'s 64-bit launch host', 1)[0]
 assert 'environment: Self.steamCompatibilityEnvironment(appID: game.id)' in launcher
 
 SHELL = r'''

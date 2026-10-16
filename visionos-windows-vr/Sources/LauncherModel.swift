@@ -550,6 +550,33 @@ final class LauncherModel {
         return environment
     }
 
+    /// Steam's 64-bit launch host may start a 32-bit game. Select the VR
+    /// package from that game's actual installed PE header, without running it.
+    nonisolated static func steamGuestArchitecture(option: SteamLaunchOption?, game: DockGame, drive: URL) -> WindowsGuestArchitecture? {
+        guard let option, isSafeSteamExecutable(option.executable) else { return nil }
+        let folder = drive.appendingPathComponent(game.library + "/common/" + game.installDir).resolvingSymlinksInPath()
+        let executable = folder.appendingPathComponent(option.executable.replacingOccurrences(of: "\\", with: "/")).resolvingSymlinksInPath()
+        guard executable.path.hasPrefix(folder.path + "/"),
+              let size = (try? executable.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])),
+              size.isRegularFile == true, let count = size.fileSize, count >= 70,
+              let file = try? FileHandle(forReadingFrom: executable) else { return nil }
+        defer { try? file.close() }
+        guard let header = try? file.read(upToCount: 64), header.count == 64,
+              header[0] == 0x4d, header[1] == 0x5a else { return nil }
+        let offset = header[60..<64].enumerated().reduce(UInt64(0)) { $0 | (UInt64($1.element) << ($1.offset * 8)) }
+        guard offset >= 64, offset <= (16 << 20), offset <= UInt64(count - 6),
+              (try? file.seek(toOffset: offset)) != nil,
+              let pe = try? file.read(upToCount: 6), pe.count == 6,
+              Array(pe.prefix(4)) == [0x50, 0x45, 0, 0] else { return nil }
+        return UInt16(pe[4]) | (UInt16(pe[5]) << 8) == 0x14c ? .x86 : nil
+    }
+
+    nonisolated private static func isSafeSteamExecutable(_ path: String) -> Bool {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        return !normalized.isEmpty && !normalized.hasPrefix("/") && !normalized.contains(":") &&
+            normalized.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+    }
+
     func selectSteamGame(_ game: DockGame, launchOption: UInt32) {
         guard canChangeSelection else { return }
         do {
@@ -567,7 +594,8 @@ final class LauncherModel {
             try FileManager.default.copyItem(at: host, to: executable)
             let options = SteamLocalAppInfo.launchOptions(appID: game.id, game: game, drive: MadeiraDock.drive)
                 ?? SteamLibraryModel.shared.games.first(where: { $0.id == game.id })?.game.launches ?? []
-            let type = options.first(where: { $0.index == launchOption })?.type.lowercased()
+            let option = options.first(where: { $0.index == launchOption })
+            let type = option?.type.lowercased()
             let mode: WindowsPresentationMode
             switch type {
             case "vr", "othervr", nil: mode = .immersiveVR
@@ -577,7 +605,9 @@ final class LauncherModel {
                 executableRelativePath: "AVPPlaySteam/dockhost.exe", backend: .windowsWineFEX,
                 graphics: .direct3D11, launchArguments: [],
                 environment: Self.steamCompatibilityEnvironment(appID: game.id),
-                presentation: mode, schemaVersion: 1)
+                presentation: mode,
+                guestArchitecture: Self.steamGuestArchitecture(option: option, game: game, drive: MadeiraDock.drive),
+                schemaVersion: 1)
             presentationModeDraft = mode
             releaseGameDirectoryAccess()
             manifest = selected
@@ -665,6 +695,10 @@ final class LauncherModel {
     func launch(preparePresentation: () async throws -> Void) async {
         guard canLaunch, let gameDirectory else { return }
         do {
+            if let manifest { restoreSteamSelection(for: manifest) }
+            // Freeze the reconciled option alongside the manifest before any
+            // async work can change the Steam library or remembered selection.
+            let launchSelection = steamSelection
             let launchManifest = try effectiveManifest()
             isLaunching = true
             immersiveSpaceClosedDuringLaunch = false
@@ -686,11 +720,10 @@ final class LauncherModel {
             // The native downloader logs off before Valve's guest client uses
             // the account. Keep the token out of manifests, argv and reports.
             await SteamLibraryModel.shared.prepareForLaunch()
-            restoreSteamSelection(for: launchManifest)
             if launchManifest.id == "steam.shared" {
                 // Say which of the four conditions fails; the user-facing error is the same for all.
-                launchLog.notice("Steam launch checks: selection=\(self.steamSelection != nil) exe=\(launchManifest.executableRelativePath == "AVPPlaySteam/dockhost.exe") dockFolder=\(gameDirectory.resolvingSymlinksInPath() == MadeiraDock.drive.resolvingSymlinksInPath()) signedIn=\(SteamSignIn.credentialsForDock() != nil)")
-                guard let selection = steamSelection,
+                launchLog.notice("Steam launch checks: selection=\(launchSelection != nil) exe=\(launchManifest.executableRelativePath == "AVPPlaySteam/dockhost.exe") dockFolder=\(gameDirectory.resolvingSymlinksInPath() == MadeiraDock.drive.resolvingSymlinksInPath()) signedIn=\(SteamSignIn.credentialsForDock() != nil)")
+                guard let selection = launchSelection,
                       selection.game.name == launchManifest.title,
                       launchManifest.executableRelativePath == "AVPPlaySteam/dockhost.exe",
                       gameDirectory.resolvingSymlinksInPath() == MadeiraDock.drive.resolvingSymlinksInPath(),
@@ -806,28 +839,38 @@ final class LauncherModel {
         launchError = nil
     }
 
-    func selectVRSmoke() throws {
+    func selectVRSmoke(architecture: WindowsGuestArchitecture? = nil, fixtureExecutable: String? = nil) throws {
         guard canChangeSelection else { return }
-        guard let resource = Bundle.main.url(forResource: "VRSmoke", withExtension: nil),
+        let resourceName = architecture == .x86 ? "VRSmokeX86" : "VRSmoke"
+        guard let resource = Bundle.main.url(forResource: resourceName, withExtension: nil),
               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             throw CocoaError(.fileNoSuchFile)
         }
         let fm = FileManager.default
-        let directory = documents.appendingPathComponent("WindowsVR/Apps/VRSmoke", isDirectory: true)
+        let directory = documents.appendingPathComponent("WindowsVR/Apps/" + resourceName, isDirectory: true)
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         guard isAppOwnedURL(directory), directory.standardizedFileURL == directory.resolvingSymlinksInPath().standardizedFileURL else {
             throw ImportFailure.folderAccessDenied
         }
-        let executable = directory.appendingPathComponent("vr-smoke.exe")
+        let executableName = fixtureExecutable ?? "vr-smoke.exe"
+        guard fixtureExecutable == nil || (architecture == .x86 && ["abi-test.exe", "handle-test.exe"].contains(executableName)) else {
+            throw WindowsGameManifestError.invalidLaunchConfiguration
+        }
+        let executable = directory.appendingPathComponent(executableName)
         let values = try? executable.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
         guard values?.isSymbolicLink != true, values?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
         // Atomic replacement of only our executable preserves the user's test log in the Windows prefix.
-        try Data(contentsOf: resource.appendingPathComponent("vr-smoke.exe")).write(to: executable, options: .atomic)
-        let demo = try JSONDecoder().decode(WindowsGameManifest.self,
+        try Data(contentsOf: resource.appendingPathComponent(executableName)).write(to: executable, options: .atomic)
+        let sourceManifest = try JSONDecoder().decode(WindowsGameManifest.self,
             from: Data(contentsOf: resource.appendingPathComponent("manifest.json")))
+        let demo = try fixtureExecutable.map { name in
+            try WindowsGameManifest(id: sourceManifest.id + "." + name, title: "32-bit runtime diagnostic",
+                executableRelativePath: name, backend: .windowsWineFEX, graphics: .direct3D11,
+                launchArguments: [], presentation: .desktop, guestArchitecture: .x86, schemaVersion: 1)
+        } ?? sourceManifest
         releaseGameDirectoryAccess()
         manifest = demo
-        presentationModeDraft = .immersiveVR
+        presentationModeDraft = demo.presentation
         manifestName = L("Built-in VR test scene", "Integrierte VR-Testszene")
         gameDirectory = directory
         gameFolderName = directory.lastPathComponent
@@ -1016,6 +1059,18 @@ final class LauncherModel {
         }
         let selectedProfile = selectedEntry?.profiles.first(where: { $0.id == selectedProfileID })
         let base = try selectedProfile?.applying(to: selectedEntry?.manifest ?? manifest) ?? manifest
+        var guestArchitecture = base.guestArchitecture
+        if base.id == "steam.shared" {
+            guard let selection = steamSelection, selection.game.name == base.title,
+                  let options = SteamLocalAppInfo.launchOptions(appID: selection.game.id, game: selection.game, drive: MadeiraDock.drive)
+                    ?? SteamLibraryModel.shared.games.first(where: { $0.id == selection.game.id })?.game.launches,
+                  let option = options.first(where: { $0.index == selection.option }) else {
+                throw DockError.message("Select this installed Steam game and its launch option again before launching.")
+            }
+            // Saved manifests and profiles may predate architecture selection
+            // or retain a different option's value. The installed child wins.
+            guestArchitecture = Self.steamGuestArchitecture(option: option, game: selection.game, drive: MadeiraDock.drive)
+        }
         return try WindowsGameManifest(
             id: base.id,
             title: base.title,
@@ -1025,6 +1080,7 @@ final class LauncherModel {
             launchArguments: draftArguments,
             environment: base.environment,
             presentation: presentationModeDraft,
+            guestArchitecture: guestArchitecture,
             schemaVersion: base.schemaVersion
         )
     }

@@ -115,6 +115,7 @@ public struct WindowsVRLaunchProfile: Codable, Sendable, Equatable, Identifiable
             launchArguments: launchArguments,
             environment: environment,
             presentation: presentation,
+            guestArchitecture: manifest.guestArchitecture,
             schemaVersion: manifest.schemaVersion
         )
     }

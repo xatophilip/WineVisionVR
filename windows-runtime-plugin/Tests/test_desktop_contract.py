@@ -52,6 +52,18 @@ int main() {
             assert(!parse(base, rejected));
         }
         base[@"presentation"] = @"desktop";
+        for (NSString *arch in @[@"x86", @"x64", @"arm64ec"]) {
+            base[@"guestArchitecture"] = arch;
+            LaunchRequest selected;
+            assert(parse(base, selected) && selected.guestArchitecture == arch.UTF8String);
+        }
+        for (id invalid in @[@"other", @1, NSNull.null, @[]]) {
+            base[@"guestArchitecture"] = invalid;
+            LaunchRequest rejected;
+            assert(!parse(base, rejected));
+        }
+        [base removeObjectForKey:@"guestArchitecture"];
+        base[@"presentation"] = @"desktop";
         for (NSString *reserved in @[@"MADEIRA_DESKTOP", @"WVR_REQUIRE_COMPOSITOR_DEVICE", @"XR_RUNTIME_JSON"]) {
             base[@"environment"] = @{reserved: @"override"};
             LaunchRequest rejected;

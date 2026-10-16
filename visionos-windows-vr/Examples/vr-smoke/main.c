@@ -25,8 +25,16 @@ typedef struct {
     void *lastPoses,*lastPose;
     EVRCompositorError (__stdcall *submit)(EVREye,Texture_t*,VRTextureBounds_t*,EVRSubmitFlags);
 } Compositor021;
-_Static_assert(sizeof(TrackedDevicePose_t)==80,"OpenVR Win64 pose packing");
+_Static_assert(sizeof(TrackedDevicePose_t)==80,"OpenVR Windows pose packing");
+#ifdef _WIN64
 _Static_assert(sizeof(Texture_t)==16,"OpenVR Win64 texture packing");
+#define WVR_OPENVR_DLL L"\\bin\\vrclient_x64.dll"
+#define WVR_OPENXR_REGISTRY_VIEW KEY_WOW64_64KEY
+#else
+_Static_assert(sizeof(Texture_t)==12,"OpenVR Win32 texture packing");
+#define WVR_OPENVR_DLL L"\\bin\\vrclient.dll"
+#define WVR_OPENXR_REGISTRY_VIEW KEY_WOW64_32KEY
+#endif
 
 typedef uint32_t (__cdecl *InitFn)(EVRInitError*,EVRApplicationType,const char*);
 typedef void* (__cdecl *InterfaceFn)(const char*,EVRInitError*);
@@ -95,7 +103,7 @@ static int configureRuntime(const wchar_t *override) {
     DWORD rid=*GetSidSubAuthority(label->Label.Sid,*GetSidSubAuthorityCount(label->Label.Sid)-1);
     logline("Windows token integrity RID=0x%lx; secure env ignored=%d",(unsigned long)rid,rid>SECURITY_MANDATORY_MEDIUM_RID);
     if(rid<=SECURITY_MANDATORY_MEDIUM_RID)return 0;
-    LONG result=RegCreateKeyExW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Khronos\\OpenXR\\1",0,NULL,0,KEY_QUERY_VALUE|KEY_SET_VALUE|KEY_WOW64_64KEY,NULL,&runtimeKey,NULL);
+    LONG result=RegCreateKeyExW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Khronos\\OpenXR\\1",0,NULL,0,KEY_QUERY_VALUE|KEY_SET_VALUE|WVR_OPENXR_REGISTRY_VIEW,NULL,&runtimeKey,NULL);
     if(result!=ERROR_SUCCESS)return fail("Open private-prefix OpenXR key",result);
     priorSize=0;result=RegQueryValueExW(runtimeKey,L"ActiveRuntime",NULL,&priorType,NULL,&priorSize);
     hadPrior=result==ERROR_SUCCESS;
@@ -152,12 +160,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR arguments,int s
     ID3D11Buffer *vertices=NULL;ID3D11RasterizerState *raster=NULL;
     ID3DBlob *vsCode=NULL,*psCode=NULL,*errors=NULL;
     logfile=fopen("C:\\vr-smoke.log","w");
-    logline("WineVision owned VR smoke v1; mode=%s; approximate IPD=0.064m",inverted?"inverted-stereo":"two-textures");
+    logline("WineVision owned VR smoke v1; mode=%s; pointerBits=%u; approximate IPD=0.064m",inverted?"inverted-stereo":"two-textures",(unsigned)(8*sizeof(void*)));
+    if(wcsstr(arguments,L"--cpu-self-test")){
+        volatile uint32_t seed=0x12345678u;uint32_t value=seed;
+        for(unsigned i=0;i<10000;i++)value=value*1664525u+1013904223u;
+        HANDLE event=CreateEventW(NULL,FALSE,FALSE,NULL);
+        if(!event){status=fail("CPU test CreateEvent",GetLastError());goto cleanup;}
+        BOOL signaled=SetEvent(event);DWORD wait=WaitForSingleObject(event,1000);CloseHandle(event);
+        if(value!=0xf0d18bc8u||!signaled||wait!=WAIT_OBJECT_0){status=fail("CPU test arithmetic/event",wait);goto cleanup;}
+        logline("CPU SELF TEST PASS pointerBits=%u arithmetic=0x%08lx event=signaled",(unsigned)(8*sizeof(void*)),(unsigned long)value);goto cleanup;
+    }
     wchar_t runtimePath[32768];DWORD length=GetEnvironmentVariableW(L"VR_OVERRIDE",runtimePath,32768);
     if(!length||length>=32700){status=fail("VR_OVERRIDE missing/too long",GetLastError());goto cleanup;}
     if(configureRuntime(runtimePath)){status=1;goto cleanup;}
     if(wcsstr(arguments,L"--registry-self-test")){logline("registry self-test configured; restoring without OpenXR execution");goto cleanup;}
-    wcscat(runtimePath,L"\\bin\\vrclient_x64.dll");
+    wcscat(runtimePath,WVR_OPENVR_DLL);
     runtime=LoadLibraryW(runtimePath);if(!runtime){status=fail("Load OpenComposite",GetLastError());goto cleanup;}
     InitFn init=(InitFn)(void*)GetProcAddress(runtime,"VR_InitInternal2");
     InterfaceFn getInterface=(InterfaceFn)(void*)GetProcAddress(runtime,"VR_GetGenericInterface");

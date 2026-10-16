@@ -21,6 +21,22 @@ final class ContractsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(WindowsGameManifest.self, from: legacy).presentation, .immersiveVR)
     }
 
+    func testWrappedGameArchitectureSurvivesManifestAndProfile() throws {
+        let selected = try WindowsGameManifest(id: "steam.shared", title: "32-bit Steam game",
+            executableRelativePath: "dockhost.exe", backend: .windowsWineFEX,
+            graphics: .direct3D11, launchArguments: [], guestArchitecture: .x86, schemaVersion: 1)
+        XCTAssertEqual(try JSONDecoder().decode(WindowsGameManifest.self,
+            from: JSONEncoder().encode(selected)).guestArchitecture, .x86)
+        let profile = try WindowsVRLaunchProfile(name: "VR", backend: .windowsWineFEX,
+            graphics: .direct3D11, launchArguments: [])
+        XCTAssertEqual(try profile.applying(to: selected).guestArchitecture, .x86)
+        XCTAssertNil(try manifest().guestArchitecture)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(selected)) as? [String: Any])
+        json["guestArchitecture"] = "unsupported"
+        XCTAssertThrowsError(try JSONDecoder().decode(WindowsGameManifest.self,
+            from: JSONSerialization.data(withJSONObject: json)))
+    }
+
     func testWindowsAndPOSIXPathEscapesRejected() throws {
         for path in ["../game.exe", "bin/../game.exe", "C:game.exe", "C:\\game.exe", "/game.exe",
                      "\\\\server\\game.exe", "bin//game.exe", "bin\\..\\game.exe", "game\0.exe"] {

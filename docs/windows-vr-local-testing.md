@@ -385,3 +385,48 @@ do not compete for the account session.
 Queue changes require a new app build. Host regression tests use the production
 queue model with controlled session/downloader substitutes; they do not fetch
 games or establish background execution while visionOS suspends the app.
+
+
+### Experimental 32-bit Windows support
+
+Audioshield (Steam app 412740) installs an i386 executable. Its captured Steam
+metadata lists only the Windows VR `Audioshield.exe` launch option. The working
+Windlands build did not include an i386 Wine farm or x86 VR bridge.
+
+The opt-in route uses `AVPPLAY_ENABLE_X86=1` with `AVPPLAY_ENABLE_D3D12=0` and a
+separate prepared legacy runtime. Modern DXMT currently rejects the WOW64
+pointer transport, so its native archive must never be combined with these
+legacy i386 graphics DLLs. Default 64-bit resources and the installed-build
+rollback are kept separately.
+
+The candidate adds freshly built i386 Wine/DXMT, native ARM64 WOW64 helpers,
+FEX WOW64, and separately staged x86 OpenComposite/OpenXR DLLs. The real Steam
+child executable supplies `guestArchitecture` through the manifest while Steam's
+launch host remains x64. Saved Steam entries and profiles are re-inspected before
+preflight, replacing missing or stale architecture fields while preserving the
+same reconciled launch option throughout asynchronous preparation. Contradictory
+overrides on a direct i386 executable are rejected. The i386 OpenVR adapters account for MSVC/MinGW aggregate returns;
+OpenXR handles use checked conversions instead of truncating uint64 handles.
+
+Legacy native graphics required a visionOS port: mobile pointer conversions,
+shader/header generation, AIR target and SDK metadata, and actual visionOS
+metallib platform fields. Optional frame interpolation is explicitly unsupported
+on visionOS; ordinary rendering remains enabled. A repeat-build fix prevents
+FreeType objects accumulating in the native win32u archive.
+
+Hardware diagnostics include a CPU/event self-test, a mixed MSVC/MinGW ABI
+fixture with a success sentinel, and the tiny VR scene. `--vr-smoke-test
+--x86-guest --x86-abi-test` selects the ABI fixture; `--vr-smoke-test --x86-guest
+--cpu-self-test` selects the CPU path; omit the last option for actual VR rendering.
+The CPU scene imports graphics DLLs even though its self-test makes no graphics
+calls. The ABI fixture provides the cleaner initial non-graphics check.
+
+Component compilation, source/receipt audits, 57 tools regression tests, and
+the signed visionOS app build have passed. Bundle verification checked 165
+ARM64EC, 137 ARM64, and 723 i386/guest bridge binaries. The exact 141 private
+Win16 compatibility forwarders from i386 kernel32 remain explicitly unsupported;
+direct dependencies and other forwarders still require real providers.
+
+Headset execution and Audioshield gameplay remain unverified until physical
+tests are recorded. A host i386 Wine attempt timed out during prefix
+initialization and is not evidence of headset compatibility.

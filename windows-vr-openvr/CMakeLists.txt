@@ -10,6 +10,7 @@ set(OPENCOMPOSITE_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third-party/openco
     "Existing pinned OpenComposite checkout used by local-source builds")
 set(OPENCOMPOSITE_FETCH_SOURCE_ROOT "${CMAKE_BINARY_DIR}/_deps/opencomposite-src")
 set(OPENCOMPOSITE_OVERLAY_SOURCE_ROOT "${CMAKE_BINARY_DIR}/_deps/opencomposite-cross-src")
+option(WINDOWS_VR_BUILD_X86 "Also package an experimental 32-bit OpenComposite guest" OFF)
 option(WINDOWS_VR_BUILD_ARM64EC "Also package an ARM64EC OpenComposite guest" OFF)
 option(WINDOWS_VR_ENABLE_D3D12 "Build experimental D3D12 OpenComposite support" OFF)
 if(WINDOWS_VR_ENABLE_D3D12)
@@ -77,6 +78,20 @@ include(ExternalProject)
 set(OPENCOMPOSITE_REPOSITORY "https://gitlab.com/znixian/OpenOVR.git")
 
 function(add_opencomposite_variant variant platform)
+    set(_cross_cmake_args ${OPENCOMPOSITE_CROSS_CMAKE_ARGS})
+    set(_overlay_source_root "${OPENCOMPOSITE_OVERLAY_SOURCE_ROOT}")
+    set(_entry "WVRDllMainCRTStartup")
+    if(variant STREQUAL "x86" AND WINDOWS_VR_USE_LLVM_MINGW)
+        if(NOT EXISTS "${LLVM_MINGW_ROOT}/bin/i686-w64-mingw32-clang++")
+            message(FATAL_ERROR "The x86 variant requires the i686 llvm-mingw compiler.")
+        endif()
+        set(_cross_cmake_args
+            "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/../windows-vr-openxr/cmake/toolchains/llvm-mingw-x86.cmake"
+            "-DLLVM_MINGW_ROOT=${LLVM_MINGW_ROOT}")
+        # Separate copies avoid patch and generated-source races with x64.
+        set(_overlay_source_root "${OPENCOMPOSITE_OVERLAY_SOURCE_ROOT}-x86")
+        set(_entry "_WVRDllMainCRTStartup@12")
+    endif()
     set(_generator_platform_args)
     if(NOT WINDOWS_VR_USE_LLVM_MINGW)
         list(APPEND _generator_platform_args CMAKE_GENERATOR_PLATFORM "${platform}")
@@ -84,7 +99,7 @@ function(add_opencomposite_variant variant platform)
 
     if(WINDOWS_VR_USE_LLVM_MINGW)
         ExternalProject_Add("OpenComposite_${variant}"
-            SOURCE_DIR "${OPENCOMPOSITE_OVERLAY_SOURCE_ROOT}"
+            SOURCE_DIR "${_overlay_source_root}"
             BINARY_DIR "${CMAKE_BINARY_DIR}/build/${variant}"
             CMAKE_GENERATOR "${CMAKE_GENERATOR}"
             ${_generator_platform_args}
@@ -97,15 +112,16 @@ function(add_opencomposite_variant variant platform)
                 COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-case-sensitive-windows-headers.patch"
                 COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-mingw-msvc-aggregate-return.patch"
                 COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-d3d11-inverted-eye-bounds.patch"
+                COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-i386-msvc-aggregate-return.patch"
             CMAKE_ARGS
                 "-DCMAKE_INSTALL_PREFIX=${OPENCOMPOSITE_STAGE_ROOT}/WindowsVR/Guest/${variant}"
                 "-DERROR_ON_WARNING=OFF"
                 "-DOC_BACKTRACE=OFF"
                 # Do not resolve x64 C++ objects/vtables against the shared
                 # ARM64EC libc++ runtime in Wine's global DLL search path.
-                "-DCMAKE_SHARED_LINKER_FLAGS=-static -Wl,--entry,WVRDllMainCRTStartup"
+                "-DCMAKE_SHARED_LINKER_FLAGS=-static -Wl,--entry,${_entry}"
                 "${OPENCOMPOSITE_GRAPHICS_OPTION}"
-                ${OPENCOMPOSITE_CROSS_CMAKE_ARGS}
+                ${_cross_cmake_args}
             BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config Release
             INSTALL_COMMAND "${CMAKE_COMMAND}" --install <BINARY_DIR> --config Release
             USES_TERMINAL_CONFIGURE TRUE
@@ -144,6 +160,11 @@ endfunction()
 add_opencomposite_variant(x64 x64)
 set(OPENCOMPOSITE_PACKAGE_DEPENDENCIES OpenComposite_x64)
 set(OPENCOMPOSITE_PACKAGE_VARIANTS x64)
+if(WINDOWS_VR_BUILD_X86)
+    add_opencomposite_variant(x86 Win32)
+    list(APPEND OPENCOMPOSITE_PACKAGE_DEPENDENCIES OpenComposite_x86)
+    list(APPEND OPENCOMPOSITE_PACKAGE_VARIANTS x86)
+endif()
 if(WINDOWS_VR_BUILD_ARM64EC)
     add_opencomposite_variant(arm64ec ARM64EC)
     list(APPEND OPENCOMPOSITE_PACKAGE_DEPENDENCIES OpenComposite_arm64ec)
@@ -152,12 +173,17 @@ endif()
 
 set(OPENCOMPOSITE_PACKAGE_COPY_COMMANDS)
 foreach(_variant IN LISTS OPENCOMPOSITE_PACKAGE_VARIANTS)
+    if(_variant STREQUAL "x86")
+        set(_vrclient_name vrclient)
+    else()
+        set(_vrclient_name vrclient_x64)
+    endif()
     list(APPEND OPENCOMPOSITE_PACKAGE_COPY_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${OPENCOMPOSITE_STAGE_ROOT}/WindowsVR/Guest/${_variant}/OpenComposite/bin"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${CMAKE_BINARY_DIR}/build/${_variant}/bin/vrclient_x64.dll"
-            "${OPENCOMPOSITE_STAGE_ROOT}/WindowsVR/Guest/${_variant}/OpenComposite/bin/vrclient_x64.dll"
+            "${CMAKE_BINARY_DIR}/build/${_variant}/bin/${_vrclient_name}.dll"
+            "${OPENCOMPOSITE_STAGE_ROOT}/WindowsVR/Guest/${_variant}/OpenComposite/bin/${_vrclient_name}.dll"
     )
 endforeach()
 

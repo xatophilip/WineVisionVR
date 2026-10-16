@@ -47,8 +47,12 @@ struct ContentView: View {
                !didStartDesktopSmokeTest {
                 didStartDesktopSmokeTest = true
                 do {
-                    try model.selectVRSmoke()
-                    if ProcessInfo.processInfo.arguments.contains("--inverted-bounds") {
+                    try model.selectVRSmoke(architecture: ProcessInfo.processInfo.arguments.contains("--x86-guest") ? .x86 : nil,
+                        fixtureExecutable: ProcessInfo.processInfo.arguments.contains("--x86-abi-test") ? "abi-test.exe" : nil)
+                    if ProcessInfo.processInfo.arguments.contains("--cpu-self-test") {
+                        model.presentationModeDraft = .desktop
+                        model.launchArgumentsText = "[\"--cpu-self-test\"]"
+                    } else if ProcessInfo.processInfo.arguments.contains("--inverted-bounds") {
                         model.launchArgumentsText = "[\"--inverted-bounds\"]"
                     }
                     await startLaunch()

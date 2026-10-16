@@ -102,3 +102,24 @@ artifact staged at
 was identified as a PE32+ x86-64 DLL. Compilation completed with nonfatal
 warnings; no runtime or device validation was performed. The toolchain bundle
 is not checked in and the CMake file does not download or install it.
+
+## Experimental 32-bit guest
+
+The existing x64 build remains the default. For an isolated i386 build, configure
+with `cmake/toolchains/llvm-mingw-x86.cmake` and
+`-DWINDOWS_VR_ENABLE_X86_EXPERIMENTAL=ON`. Its default output is
+`stage/WindowsVR/Guest/x86/wvr_openxr.dll`; it must be paired with the x86
+`OpenComposite/bin/vrclient.dll` and a complete, matching i386 Wine/DXMT resource
+farm. This flag does not make an x64 Windows executable into an x86 executable.
+
+OpenXR specifies 64-bit integer handles on 32-bit systems. The runtime encodes
+resource addresses through `uintptr_t` and rejects handles with nonzero upper
+bits before checking the live-resource registry. The fixed-width WMT transport
+continues to carry native object IDs rather than guest COM pointers. The
+negotiation function has the undecorated export required by the loader.
+
+`tests/test_handle_encoding.py` executes native ASan/UBSan checks and compiles
+real i386 roundtrip/overflow guards and a PE fixture. Compile-only i386 results
+are not headset compatibility evidence. The modern DXMT profile still requires
+its own complete WOW64 port; the experimental guest must use a matching backend
+that supports 32-bit Wine window handles and Unix-call tables.

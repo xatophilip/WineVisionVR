@@ -49,6 +49,7 @@ def project_patch_hashes():
         "windows-vr-openxr/include/WindowsVRD3D11ContextExt.h",
         "windows-vr-openxr/include/WindowsVRD3D12CommandQueueExt.h",
         "windows-vr-openxr/include/WindowsVRWMTBridge.h",
+        "windows-vr-openxr/include/WindowsVRHandles.h",
         "windows-vr-native/include/WindowsVRCompositorBridge.h",
         "windows-vr-ngx/src/WVRMetalFXWMTBridge.h",
         "windows-vr-ngx/src/WVRMetalFXWMTBridge.inc",
@@ -57,6 +58,7 @@ def project_patch_hashes():
         "windows-vr-openxr/src/WindowsVROpenXR.cpp",
         "windows-vr-openxr/CMakeLists.txt",
         "windows-vr-tools/prepare_runtime.py",
+        "windows-vr-openxr/native-d3d12/generate_metallib_platform.py",
         "windows-vr-tools/verify_source_checkout.py",
         "windows-vr-tools/prepare_wine_native.sh",
         "windows-runtime-plugin/d3d12/0001-embedded-dxmt-dispatch.patch",
@@ -108,6 +110,18 @@ def main():
     atexit.register(shutil.rmtree, staging_root, ignore_errors=True)
     output = staging_root / "overlay"
     shutil.copytree(source, output, ignore=ignore_cache_files, symlinks=True)
+    # The legacy local Metal backend includes the remote protocol's validation
+    # types even when remote rendering is disabled. Preserve only its four
+    # pinned source headers, without copying research build caches or tools.
+    for relative in ("research/remote-metal/protocol.h", "research/remote-metal/wmt_pack.h",
+                     "research/remote-metal/wmt_wire.h", "research/remote-metal/host/wmt_decode.h"):
+        original = source / relative
+        if original.is_symlink() or not original.is_file():
+            raise SystemExit(f"Missing pinned legacy Metal protocol header: {original}")
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original, destination)
+
     wine_version = (source / "wine/VERSION").read_text(encoding="utf-8").strip()
     (output / "app/Madeira/AVPPlayWineBuild.c").write_text(
         "/* Generated from the locked Wine source version. */\n"
@@ -237,6 +251,7 @@ def main():
                     subprocess.run(["git", "init", "--quiet"], cwd=patch_root, check=True)
                 subprocess.run(["git", "apply", str(patch)], cwd=patch_root, check=True)
     supplemental = {
+        ROOT / "windows-vr-openxr/native-d3d12/generate_metallib_platform.py": output / "build/dxmt-ios/generate_metallib_platform.py",
         ROOT / "windows-vr-ngx/src/WVRMetalFXWMTBridge.h": output / "dxmt/src/winemetal/unix/WVRMetalFXWMTBridge.h",
         ROOT / "windows-vr-ngx/src/WVRMetalFXWMTBridge.inc": output / "dxmt/src/winemetal/unix/WVRMetalFXWMTBridge.inc",
         ROOT / "windows-vr-ngx/include/WindowsVRNGX.h": output / "dxmt/src/nvngx/WindowsVRNGX.h",

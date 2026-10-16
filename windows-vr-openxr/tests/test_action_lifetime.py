@@ -18,6 +18,7 @@ def function(signature):
     return source[start:end]
 preamble = r'''
 #include <openxr/openxr.h>
+#include "WindowsVRHandles.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -115,5 +116,5 @@ with tempfile.TemporaryDirectory(prefix='wvr-action-lifetime-') as work:
     cpp = Path(work)/'test.cpp'
     cpp.write_text(preamble+'\n'.join(functions)+tests)
     exe = Path(work)/'test'
-    subprocess.run(['clang++','-std=c++20','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I',str(root/'third-party/openxr/include'),str(cpp),'-o',str(exe)],check=True)
+    subprocess.run(['clang++','-std=c++20','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I',str(root/'third-party/openxr/include'),'-I',str(root/'windows-vr-openxr/include'),str(cpp),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)

@@ -9,6 +9,7 @@
 #include <d3d12.h>
 #include <dxgi.h>
 #include <openxr/openxr.h>
+#include "WindowsVRHandles.h"
 #include <openxr/openxr_platform.h>
 #include <openxr/openxr_loader_negotiation.h>
 #include <WindowsVRD3D11ContextExt.h>
@@ -319,12 +320,12 @@ void TraceCompositorDrop(uint64_t frameIndex) {
 void RegisterHandle(const void *handle) { std::lock_guard<std::mutex> lock(g_handleMutex); g_liveHandles.insert(handle); }
 void UnregisterHandle(const void *handle) { std::lock_guard<std::mutex> lock(g_handleMutex); g_liveHandles.erase(handle); }
 bool IsLiveHandle(const void *handle) { if (!handle) return false; std::lock_guard<std::mutex> lock(g_handleMutex); return g_liveHandles.contains(handle); }
-Instance *GetInstance(XrInstance h) { auto *p = reinterpret_cast<Instance *>(h); return IsLiveHandle(p) && p->magic == kMagicInstance ? p : nullptr; }
-Session *GetSession(XrSession h) { auto *p = reinterpret_cast<Session *>(h); return IsLiveHandle(p) && p->magic == kMagicSession ? p : nullptr; }
-Swapchain *GetSwapchain(XrSwapchain h) { auto *p = reinterpret_cast<Swapchain *>(h); return IsLiveHandle(p) && p->magic == kMagicSwapchain ? p : nullptr; }
-Space *GetSpace(XrSpace h) { auto *p = reinterpret_cast<Space *>(h); return IsLiveHandle(p) && p->magic == kMagicSpace ? p : nullptr; }
-ActionSet *GetActionSet(XrActionSet h) { auto *p = reinterpret_cast<ActionSet *>(h); return IsLiveHandle(p) && p->magic == kMagicActionSet ? p : nullptr; }
-Action *GetAction(XrAction h) { auto *p = reinterpret_cast<Action *>(h); return IsLiveHandle(p) && p->magic == kMagicAction ? p : nullptr; }
+Instance *GetInstance(XrInstance h) { auto *p = WVRPointerFromHandle<Instance>(h); return IsLiveHandle(p) && p->magic == kMagicInstance ? p : nullptr; }
+Session *GetSession(XrSession h) { auto *p = WVRPointerFromHandle<Session>(h); return IsLiveHandle(p) && p->magic == kMagicSession ? p : nullptr; }
+Swapchain *GetSwapchain(XrSwapchain h) { auto *p = WVRPointerFromHandle<Swapchain>(h); return IsLiveHandle(p) && p->magic == kMagicSwapchain ? p : nullptr; }
+Space *GetSpace(XrSpace h) { auto *p = WVRPointerFromHandle<Space>(h); return IsLiveHandle(p) && p->magic == kMagicSpace ? p : nullptr; }
+ActionSet *GetActionSet(XrActionSet h) { auto *p = WVRPointerFromHandle<ActionSet>(h); return IsLiveHandle(p) && p->magic == kMagicActionSet ? p : nullptr; }
+Action *GetAction(XrAction h) { auto *p = WVRPointerFromHandle<Action>(h); return IsLiveHandle(p) && p->magic == kMagicAction ? p : nullptr; }
 
 uint32_t RoleForPath(Instance *instance, XrPath path) {
   if (!instance || path == XR_NULL_PATH) return UINT32_MAX;
@@ -397,7 +398,7 @@ bool ActionSetIsActive(Session *session,ActionSet *set) {
   if(!session||!set)return false;
   std::lock_guard<std::recursive_mutex> actionLock(session->actionMutex);
   if(!session->actionSetsAttached)return false;
-  const XrActionSet handle=reinterpret_cast<XrActionSet>(set);
+  const XrActionSet handle=WVRHandleFromPointer<XrActionSet>(set);
   return std::find(session->activeActionSets.begin(),session->activeActionSets.end(),handle)!=session->activeActionSets.end();
 }
 
@@ -405,7 +406,7 @@ bool ActionSetRoleIsActive(Session *session, ActionSet *set, uint32_t role) {
   if (role != kControllerLeft && role != kControllerRight) return false;
   std::lock_guard<std::recursive_mutex> actionLock(session->actionMutex);
   if (!ActionSetIsActive(session, set)) return false;
-  const auto found = session->activeSetSubactions.find(reinterpret_cast<XrActionSet>(set));
+  const auto found = session->activeSetSubactions.find(WVRHandleFromPointer<XrActionSet>(set));
   return found != session->activeSetSubactions.end() && (found->second & (1u << role)) != 0;
 }
 
@@ -772,7 +773,7 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo *info, XrInstance 
   if (!QueryTargets(p->targets,p->d3d12BackendAvailable)) {TraceResult(TraceInstance,XR_ERROR_RUNTIME_FAILURE);return XR_ERROR_RUNTIME_FAILURE;}
   if(d3d12Enabled&&!p->d3d12BackendAvailable){TraceResult(TraceInstance,XR_ERROR_EXTENSION_NOT_PRESENT);return XR_ERROR_EXTENSION_NOT_PRESENT;}
   Instance *raw=p.get(); { std::lock_guard<std::mutex> l(g_mutex); g_instances.push_back(std::move(p)); } RegisterHandle(raw);
-  *out=reinterpret_cast<XrInstance>(raw); TraceResult(TraceInstance,XR_SUCCESS,raw->targets.generation);return XR_SUCCESS;
+  *out=WVRHandleFromPointer<XrInstance>(raw); TraceResult(TraceInstance,XR_SUCCESS,raw->targets.generation);return XR_SUCCESS;
 }
 XrResult XRAPI_CALL DestroyInstance(XrInstance h) {
   auto *p=GetInstance(h); if(!p) return XR_ERROR_HANDLE_INVALID;
@@ -833,7 +834,7 @@ XrResult XRAPI_CALL CreateSession(XrInstance ih,const XrSessionCreateInfo *info,
     s->instance=i;s->device=binding->device;s->device->AddRef();s->context=context;s->dxmt=ext;s->dxmtExt3=ext3;
     Session*raw=s.get();QueueSessionState(raw,XR_SESSION_STATE_READY);
     {std::lock_guard<std::mutex>l(g_mutex);g_sessions.push_back(std::move(s));}
-    RegisterHandle(raw);*out=reinterpret_cast<XrSession>(raw);TraceResult(TraceSession,XR_SUCCESS,11);return XR_SUCCESS;
+    RegisterHandle(raw);*out=WVRHandleFromPointer<XrSession>(raw);TraceResult(TraceSession,XR_SUCCESS,11);return XR_SUCCESS;
   }
 
   if(bindingHeader->type==XR_TYPE_GRAPHICS_BINDING_D3D12_KHR){
@@ -874,7 +875,7 @@ XrResult XRAPI_CALL CreateSession(XrInstance ih,const XrSessionCreateInfo *info,
     s->queue12=binding->queue;s->queue12->AddRef();s->dxmtQueue12=ext;s->d3d12=true;
     Session*raw=s.get();QueueSessionState(raw,XR_SESSION_STATE_READY);
     {std::lock_guard<std::mutex>l(g_mutex);g_sessions.push_back(std::move(s));}
-    RegisterHandle(raw);*out=reinterpret_cast<XrSession>(raw);TraceResult(TraceSession,XR_SUCCESS,12);return XR_SUCCESS;
+    RegisterHandle(raw);*out=WVRHandleFromPointer<XrSession>(raw);TraceResult(TraceSession,XR_SUCCESS,12);return XR_SUCCESS;
   }
   return XR_ERROR_GRAPHICS_DEVICE_INVALID;
 }
@@ -926,7 +927,7 @@ XrResult XRAPI_CALL EndSession(XrSession h) {
   return result;
 }
 XrResult XRAPI_CALL RequestExitSession(XrSession h){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!s->begun)return XR_ERROR_SESSION_NOT_RUNNING;if(s->exitRequested)return XR_ERROR_CALL_ORDER_INVALID;s->exitRequested=true;s->frameCondition.notify_all();QueueSessionState(s,XR_SESSION_STATE_STOPPING);return XR_SUCCESS;}
-XrResult XRAPI_CALL CreateReferenceSpace(XrSession h,const XrReferenceSpaceCreateInfo*info,XrSpace*out){auto*s=GetSession(h);if(!s||!info||!out)return XR_ERROR_HANDLE_INVALID;if(info->type!=XR_TYPE_REFERENCE_SPACE_CREATE_INFO)return XR_ERROR_VALIDATION_FAILURE;if(info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_LOCAL&&info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_VIEW&&info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_STAGE)return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;auto p=std::make_unique<Space>();p->session=s;p->type=info->referenceSpaceType;p->poseInReferenceSpace=info->poseInReferenceSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=reinterpret_cast<XrSpace>(raw);return XR_SUCCESS;}
+XrResult XRAPI_CALL CreateReferenceSpace(XrSession h,const XrReferenceSpaceCreateInfo*info,XrSpace*out){auto*s=GetSession(h);if(!s||!info||!out)return XR_ERROR_HANDLE_INVALID;if(info->type!=XR_TYPE_REFERENCE_SPACE_CREATE_INFO)return XR_ERROR_VALIDATION_FAILURE;if(info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_LOCAL&&info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_VIEW&&info->referenceSpaceType!=XR_REFERENCE_SPACE_TYPE_STAGE)return XR_ERROR_REFERENCE_SPACE_UNSUPPORTED;auto p=std::make_unique<Space>();p->session=s;p->type=info->referenceSpaceType;p->poseInReferenceSpace=info->poseInReferenceSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=WVRHandleFromPointer<XrSpace>(raw);return XR_SUCCESS;}
 XrResult XRAPI_CALL DestroySpace(XrSpace h){auto*p=GetSpace(h);if(!p)return XR_ERROR_HANDLE_INVALID;std::lock_guard<std::mutex>l(g_mutex);UnregisterHandle(p);p->magic=0;g_spaces.erase(std::remove_if(g_spaces.begin(),g_spaces.end(),[p](auto&x){return x.get()==p;}),g_spaces.end());return XR_SUCCESS;}
 XrResult XRAPI_CALL EnumerateSwapchainFormatsImpl(XrSession h,uint32_t cap,uint32_t*count,int64_t*out){auto*s=GetSession(h);if(!s||!count)return XR_ERROR_HANDLE_INVALID;DXGI_FORMAT f=FormatForMetal(s->instance->targets.pixelFormat[0]);if(f==DXGI_FORMAT_UNKNOWN)return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;int64_t fmt=f;return EnumerateOne(&fmt,cap,count,out,sizeof(fmt));}
 XrResult XRAPI_CALL EnumerateSwapchainFormats(XrSession h,uint32_t cap,uint32_t*count,int64_t*out){const XrResult result=EnumerateSwapchainFormatsImpl(h, cap, count, out);TraceCall(TraceSwapchainFormats,result,0);return result;}
@@ -993,7 +994,7 @@ XrResult XRAPI_CALL CreateSwapchainImpl(XrSession h,const XrSwapchainCreateInfo*
     }
   }
   Swapchain*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_swapchains.push_back(std::move(p));s->swapchains.push_back(raw);}
-  RegisterHandle(raw);*out=reinterpret_cast<XrSwapchain>(raw);return XR_SUCCESS;
+  RegisterHandle(raw);*out=WVRHandleFromPointer<XrSwapchain>(raw);return XR_SUCCESS;
 }
 XrResult XRAPI_CALL CreateSwapchain(XrSession h,const XrSwapchainCreateInfo*info,XrSwapchain*out){
   const XrResult result=CreateSwapchainImpl(h,info,out);
@@ -1279,11 +1280,11 @@ XrResult XRAPI_CALL PollEventImpl(XrInstance h,XrEventDataBuffer*out){
   for(auto&entry:g_sessions){auto*session=entry.get();if(session->instance!=instance)continue;ObserveSessionExitRequest(session);std::lock_guard<std::mutex> eventLock(session->eventMutex);if(session->interactionProfileChanged){
       session->interactionProfileChanged=false;
       auto* changed=reinterpret_cast<XrEventDataInteractionProfileChanged*>(out);
-      changed->type=XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED;changed->next=nullptr;changed->session=reinterpret_cast<XrSession>(session);return XR_SUCCESS;
+      changed->type=XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED;changed->next=nullptr;changed->session=WVRHandleFromPointer<XrSession>(session);return XR_SUCCESS;
     }if(session->events.empty())continue;
     const SessionEvent event=session->events.front();session->events.erase(session->events.begin());
     auto*changed=reinterpret_cast<XrEventDataSessionStateChanged*>(out);
-    changed->type=XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;changed->next=nullptr;changed->session=reinterpret_cast<XrSession>(session);changed->state=event.state;changed->time=event.time;return XR_SUCCESS;
+    changed->type=XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;changed->next=nullptr;changed->session=WVRHandleFromPointer<XrSession>(session);changed->state=event.state;changed->time=event.time;return XR_SUCCESS;
   }
   return XR_EVENT_UNAVAILABLE;
 }
@@ -1407,7 +1408,7 @@ XrResult XRAPI_CALL GetInputSourceLocalizedName(XrSession h,const XrInputSourceL
 
 XrResult XRAPI_CALL CreateActionSpace(XrSession h,const XrActionSpaceCreateInfo*info,XrSpace*out){
   auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_ACTION_SPACE_CREATE_INFO||!out)return XR_ERROR_VALIDATION_FAILURE;auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;if(a->type!=XR_ACTION_TYPE_POSE_INPUT)return XR_ERROR_ACTION_TYPE_MISMATCH;if(info->subactionPath!=XR_NULL_PATH&&std::find(a->subactionPaths.begin(),a->subactionPaths.end(),info->subactionPath)==a->subactionPaths.end())return XR_ERROR_PATH_UNSUPPORTED;
-  auto p=std::make_unique<Space>();p->session=s;p->action=info->action;p->actionResource=a;p->subactionPath=info->subactionPath;p->poseInActionSpace=info->poseInActionSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=reinterpret_cast<XrSpace>(raw);return XR_SUCCESS;
+  auto p=std::make_unique<Space>();p->session=s;p->action=info->action;p->actionResource=a;p->subactionPath=info->subactionPath;p->poseInActionSpace=info->poseInActionSpace;Space*raw=p.get();{std::lock_guard<std::mutex>l(g_mutex);g_spaces.push_back(std::move(p));}RegisterHandle(raw);*out=WVRHandleFromPointer<XrSpace>(raw);return XR_SUCCESS;
 }
 
 XrResult XRAPI_CALL LocateSpace(XrSpace spaceHandle,XrSpace baseHandle,XrTime time,XrSpaceLocation*out){
@@ -1424,14 +1425,14 @@ std::string BoundedName(const char*value,size_t capacity){const char*end=static_
 
 XrResult XRAPI_CALL CreateActionSet(XrInstance h,const XrActionSetCreateInfo*info,XrActionSet*out){
   auto*i=GetInstance(h);if(!i)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_ACTION_SET_CREATE_INFO||!out)return XR_ERROR_VALIDATION_FAILURE;std::string name=BoundedName(info->actionSetName,sizeof(info->actionSetName));if(name.empty())return XR_ERROR_NAME_INVALID;
-  auto set=std::make_unique<ActionSet>();set->instance=i;set->name=name;set->priority=info->priority;ActionSet*raw=set.get();{std::lock_guard<std::mutex>lock(i->mutex);i->actionSets.push_back(std::move(set));}RegisterHandle(raw);*out=reinterpret_cast<XrActionSet>(raw);return XR_SUCCESS;
+  auto set=std::make_unique<ActionSet>();set->instance=i;set->name=name;set->priority=info->priority;ActionSet*raw=set.get();{std::lock_guard<std::mutex>lock(i->mutex);i->actionSets.push_back(std::move(set));}RegisterHandle(raw);*out=WVRHandleFromPointer<XrActionSet>(raw);return XR_SUCCESS;
 }
 // Called with the instance mutex held. Public handles die immediately, but
 // backing resources remain instance-owned for surviving action spaces. OpenXR
 // permits retaining those resources until xrDestroyInstance.
 void InvalidateActionHandle(Action *action) {
   Instance *instance=action->set->instance;
-  const XrAction handle=reinterpret_cast<XrAction>(action);
+  const XrAction handle=WVRHandleFromPointer<XrAction>(action);
   UnregisterHandle(action);
   action->magic=0;
   for(auto& profile:instance->profileBindings){
@@ -1471,7 +1472,7 @@ XrResult XRAPI_CALL CreateAction(XrActionSet h,const XrActionCreateInfo*info,XrA
     if(std::find(action->subactionPaths.begin(),action->subactionPaths.end(),info->subactionPaths[n])!=action->subactionPaths.end())return XR_ERROR_VALIDATION_FAILURE;
     action->subactionPaths.push_back(info->subactionPaths[n]);
   }
-  Action*raw=action.get();{std::lock_guard<std::mutex>lock(set->instance->mutex);set->instance->actions.push_back(std::move(action));set->actions.push_back(reinterpret_cast<XrAction>(raw));}RegisterHandle(raw);*out=reinterpret_cast<XrAction>(raw);return XR_SUCCESS;
+  Action*raw=action.get();{std::lock_guard<std::mutex>lock(set->instance->mutex);set->instance->actions.push_back(std::move(action));set->actions.push_back(WVRHandleFromPointer<XrAction>(raw));}RegisterHandle(raw);*out=WVRHandleFromPointer<XrAction>(raw);return XR_SUCCESS;
 }
 XrResult XRAPI_CALL DestroyAction(XrAction h) {
   auto*action=GetAction(h);if(!action)return XR_ERROR_HANDLE_INVALID;

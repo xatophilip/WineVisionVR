@@ -132,7 +132,8 @@ public final class NativePluginWindowsRuntime: WindowsRuntime, @unchecked Sendab
             executablePath: executableURL.path,
             arguments: manifest.launchArguments,
             environment: manifest.environment,
-            presentation: manifest.presentation.rawValue
+            presentation: manifest.presentation.rawValue,
+            guestArchitecture: manifest.guestArchitecture?.rawValue
         )
         let requestData = try JSONEncoder().encode(request)
         guard let requestJSON = String(data: requestData, encoding: .utf8) else {
@@ -238,5 +239,6 @@ public final class NativePluginWindowsRuntime: WindowsRuntime, @unchecked Sendab
         let arguments: [String]
         let environment: [String: String]
         let presentation: String
+        let guestArchitecture: String?
     }
 }

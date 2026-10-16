@@ -56,6 +56,7 @@ struct LaunchRequest {
     std::string backend;
     std::string graphics;
     std::string presentation = "immersiveVR";
+    std::string guestArchitecture;
     std::string gameDirectory;
     std::string executablePath;
     std::vector<std::string> arguments;
@@ -289,9 +290,10 @@ bool CopyGuestOpenComposite(NSString *source, NSString *destination, std::string
 
 bool InstallGuestOpenXRRuntime(uint16_t machine, bool gameARM64EC, NSString *driveC, std::string &runtimeABI,
                                LaunchScope &scope, std::string &error) {
-    // OpenComposite currently ships only an x64 guest build. ARM64EC is a
-    // separate package and may only be selected for an ARM64EC PE image.
-    if (machine == 0x8664 && !gameARM64EC) runtimeABI = "x64";
+    // The game may be a child of the 64-bit Steam host. Its explicit guest
+    // architecture selects a separately validated VR package.
+    if (machine == 0x014c && !gameARM64EC) runtimeABI = "x86";
+    else if (machine == 0x8664 && !gameARM64EC) runtimeABI = "x64";
     else if (machine == 0xA641 || (machine == 0x8664 && gameARM64EC)) runtimeABI = "arm64ec";
     else {
         error = "No OpenComposite/OpenXR runtime package is available for this PE machine type.";
@@ -301,7 +303,7 @@ bool InstallGuestOpenXRRuntime(uint16_t machine, bool gameARM64EC, NSString *dri
     NSString *guestRoot = [[[NSBundle mainBundle] resourceURL] URLByAppendingPathComponent:
         [NSString stringWithFormat:@"WindowsVR/Guest/%s", runtimeABI.c_str()]].path;
     NSString *openComposite = [guestRoot stringByAppendingPathComponent:@"OpenComposite"];
-    NSString *clientDLL = [openComposite stringByAppendingPathComponent:@"bin/vrclient_x64.dll"];
+    NSString *clientDLL = [openComposite stringByAppendingPathComponent:runtimeABI == "x86" ? @"bin/vrclient.dll" : @"bin/vrclient_x64.dll"];
     NSString *runtimeDLL = [guestRoot stringByAppendingPathComponent:@"wvr_openxr.dll"];
     NSFileManager *fm = [NSFileManager defaultManager];
     NSDictionary *clientInfo = [fm attributesOfItemAtPath:clientDLL error:nil];
@@ -421,6 +423,12 @@ bool ParseRequest(const char *json, LaunchRequest &request, std::string &error) 
     }
     if (request.presentation != "immersiveVR" && request.presentation != "desktop") {
         error = "Unsupported presentation mode.";
+        return false;
+    }
+    if (!ReadString(dict, @"guestArchitecture", request.guestArchitecture, false) ||
+        (!request.guestArchitecture.empty() && request.guestArchitecture != "x86" &&
+         request.guestArchitecture != "x64" && request.guestArchitecture != "arm64ec")) {
+        error = "Unsupported guest runtime architecture.";
         return false;
     }
     NSNumber *schema = dict[@"schemaVersion"];
@@ -573,6 +581,41 @@ bool HasD3D12Package() {
     return available;
 }
 
+uint16_t RuntimeGuestMachine(const LaunchRequest &request, uint16_t executableMachine) {
+    if (request.guestArchitecture == "x86") return 0x014c;
+    if (request.guestArchitecture == "x64") return 0x8664;
+    if (request.guestArchitecture == "arm64ec") return 0xA641;
+    return executableMachine;
+}
+
+bool HasX86WineResources(std::string &error) {
+    NSURL *resources = [NSBundle mainBundle].resourceURL;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *name in @[@"ntdll.dll", @"kernel32.dll", @"kernelbase.dll", @"user32.dll", @"d3d11.dll", @"dxgi.dll", @"winemetal.dll"]) {
+        NSString *path = [[resources URLByAppendingPathComponent:@"Runtime/i386-windows"] URLByAppendingPathComponent:name].path;
+        NSDictionary *info = [fm attributesOfItemAtPath:path error:nil];
+        uint16_t machine = 0;
+        if (![info[NSFileType] isEqualToString:NSFileTypeRegular] || ![info[NSFileSize] unsignedLongLongValue] ||
+            !IsContainedPath(path.fileSystemRepresentation ?: "", resources.path.fileSystemRepresentation ?: "") ||
+            !ReadPEMachine(path.fileSystemRepresentation ?: "", machine) || machine != 0x014c) {
+            error = "This game needs the experimental 32-bit Windows runtime; its matching DLL package is missing or invalid.";
+            return false;
+        }
+    }
+    for (NSString *name in @[@"wow64.dll", @"wow64win.dll", @"xtajit.dll"]) {
+        NSString *path = [[resources URLByAppendingPathComponent:@"Runtime/aarch64-windows"] URLByAppendingPathComponent:name].path;
+        NSDictionary *info = [fm attributesOfItemAtPath:path error:nil];
+        uint16_t machine = 0;
+        if (![info[NSFileType] isEqualToString:NSFileTypeRegular] || ![info[NSFileSize] unsignedLongLongValue] ||
+            !IsContainedPath(path.fileSystemRepresentation ?: "", resources.path.fileSystemRepresentation ?: "") ||
+            !ReadPEMachine(path.fileSystemRepresentation ?: "", machine) || machine != 0xAA64) {
+            error = "The native WoW64 CPU/runtime backend is missing or invalid.";
+            return false;
+        }
+    }
+    return true;
+}
+
 int32_t PreflightRequest(LaunchRequest &request, std::string &error) {
     if ((wvr_dxmt_d3d12_unix_call_count_v1 || wvr_dxmt_d3d12_transport_abi_v1) && !IsModernDXMTNativeProfile()) {
         error = "The linked modern DXMT native archive has an incompatible dispatch table or transport ABI.";
@@ -611,9 +654,22 @@ int32_t PreflightRequest(LaunchRequest &request, std::string &error) {
         return EINVAL;
     }
     uint16_t machine = 0;
-    if (!IsX64PE(request.executablePath) || !ReadPEMachine(request.executablePath, machine)) {
-        error = "The first Windows VR runtime requires a readable x64 (AMD64) PE executable.";
+    if (!ReadPEMachine(request.executablePath, machine) ||
+        (machine != 0x014c && !IsX64PE(request.executablePath))) {
+        error = "The Windows runtime requires a readable x64 or experimental x86 PE executable.";
         return ENOTSUP;
+    }
+    const uint16_t runtimeMachine = RuntimeGuestMachine(request, machine);
+    if (machine == 0x014c && runtimeMachine != 0x014c) {
+        error = "A 32-bit executable requires the matching 32-bit guest runtime; a 64-bit override cannot bypass that requirement.";
+        return ENOTSUP;
+    }
+    if (runtimeMachine == 0x014c) {
+        if (request.graphics != "direct3D11" || IsModernDXMTNativeProfile()) {
+            error = "The experimental 32-bit runtime requires its matching legacy D3D11 graphics profile.";
+            return ENOTSUP;
+        }
+        if (!HasX86WineResources(error)) return ENOENT;
     }
     NSURL *resources = [NSBundle mainBundle].resourceURL;
     for (NSString *path in @[@"Runtime/prefix-template.tar.gz",
@@ -638,15 +694,19 @@ int32_t PreflightRequest(LaunchRequest &request, std::string &error) {
             return ENOENT;
         }
     }
-    if (request.presentation == "immersiveVR") for (NSString *path in @[@"WindowsVR/Guest/x64/OpenComposite/bin/vrclient_x64.dll", @"WindowsVR/Guest/x64/wvr_openxr.dll"]) {
+    NSString *runtimeABI = runtimeMachine == 0x014c ? @"x86" : (runtimeMachine == 0xA641 ? @"arm64ec" : @"x64");
+    NSString *runtimeRoot = [@"WindowsVR/Guest" stringByAppendingPathComponent:runtimeABI];
+    NSArray *runtimePaths = @[[runtimeRoot stringByAppendingPathComponent:runtimeMachine == 0x014c ? @"OpenComposite/bin/vrclient.dll" : @"OpenComposite/bin/vrclient_x64.dll"],
+                             [runtimeRoot stringByAppendingPathComponent:@"wvr_openxr.dll"]];
+    if (request.presentation == "immersiveVR") for (NSString *path in runtimePaths) {
         NSString *resourcePath = [resources URLByAppendingPathComponent:path].path;
         NSDictionary *attributes = [fm attributesOfItemAtPath:resourcePath error:nil];
         uint16_t guestMachine = 0;
         if (![attributes[NSFileType] isEqualToString:NSFileTypeRegular] ||
             !IsContainedPath(resourcePath.fileSystemRepresentation ?: "", resources.path.fileSystemRepresentation ?: "") ||
-            !IsX64PE(resourcePath.fileSystemRepresentation ?: "") ||
-            !ReadPEMachine(resourcePath.fileSystemRepresentation ?: "", guestMachine) || guestMachine != machine) {
-            error = "Required guest runtime DLL is absent or does not match the x64 game: " + std::string(path.UTF8String ?: "");
+            !ReadPEMachine(resourcePath.fileSystemRepresentation ?: "", guestMachine) || guestMachine != runtimeMachine ||
+            (runtimeMachine == 0x8664 && !IsX64PE(resourcePath.fileSystemRepresentation ?: ""))) {
+            error = "Required guest runtime DLL is absent or does not match the selected game architecture: " + std::string(path.UTF8String ?: "");
             return ENOENT;
         }
     }
@@ -756,7 +816,9 @@ int32_t RunRequest(LaunchRequest request) {
     std::string runtimeABI;
     std::string runtimeError;
     if (request.presentation == "immersiveVR" &&
-        !InstallGuestOpenXRRuntime(machine, gameARM64EC, driveC, runtimeABI, scope, runtimeError)) {
+        !InstallGuestOpenXRRuntime(RuntimeGuestMachine(request, machine),
+                                   request.guestArchitecture.empty() ? gameARM64EC : request.guestArchitecture == "arm64ec",
+                                   driveC, runtimeABI, scope, runtimeError)) {
         SetError(runtimeError);
         return -1;
     }

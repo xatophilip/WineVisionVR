@@ -85,7 +85,24 @@ targets:
           copyFiles:
             destination: resources
             subpath: arm64ec-windows
+      # Optional experimental x86 bootstrap; the complete farm stays in Runtime.
+      - path: Resources/Runtime/i386-windows/ntdll.dll
+        optional: true
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: i386-windows
+      - path: Resources/Runtime/i386-windows/apisetschema.dll
+        optional: true
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: i386-windows
       - path: Resources/WindowsVR
+        type: folder
+        buildPhase: resources
+      - path: Resources/VRSmokeX86
+        optional: true
         type: folder
         buildPhase: resources
       - path: Resources/VRSmoke
@@ -226,6 +243,10 @@ targets:
           # Optional legacy DXMT release diagnostics are absent in the modern
           # backend; preserve the existing weak-import/null-check semantics.
           - -Wl,-U,_madeira_wmt_released_class
+          # Modern-profile probes are optional in the legacy x86 build.
+          # Mach-O requires explicit unresolved-weak permission at link time.
+          - -Wl,-U,_wvr_dxmt_d3d12_unix_call_count_v1
+          - -Wl,-U,_wvr_dxmt_d3d12_transport_abi_v1
           - -framework
           - IOKit
           - -framework

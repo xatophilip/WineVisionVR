@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sanitize_prefix_snapshot as sanitizer
 import stage_resources as stage
 import resource_receipt as receipt
+import verify_wine_imports as imports
 from verify_source_checkout import verify_source_checkout
 
 
@@ -171,6 +172,143 @@ class DriverPackagingTests(unittest.TestCase):
              patch.object(stage, "ARM64EC_REQUIRED_BUILTINS", {"winspool.drv"}):
             stage.copy_builtins(self.source, destination)
         self.assertEqual((destination / "arm64ec-windows/winspool.drv").read_bytes(), b"PE driver fixture")
+
+
+class X86PackagingTests(unittest.TestCase):
+    """Exercise fail-closed opt-in copying, architecture and dependency receipts."""
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name)
+        self.source = self.root / "source"
+        for farm, machine in (("aarch64-windows", 0xAA64), ("arm64ec-windows", 0xA641), ("i386-windows", 0x14C)):
+            names = (stage.I386_REQUIRED_BUILTINS if machine == 0x14C else stage.REQUIRED_BUILTINS) | ({"d3d11.dll", "winemetal.dll"} | stage.ARM64EC_REQUIRED_BUILTINS if machine == 0xA641 else set())
+            if machine == 0xAA64:
+                names |= stage.WOW64_REQUIRED_BUILTINS
+            for name in names:
+                self.pe(self.source / farm / name, machine)
+        for directory in ("legal", "nls"):
+            path = self.source / directory / "fixture"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"resource")
+        self.guest = self.root / "WindowsVR"
+        for relative, machine in (("Guest/x64/OpenComposite/bin/vrclient_x64.dll", 0x8664),
+                                  ("Guest/x64/wvr_openxr.dll", 0x8664),
+                                  ("Guest/x86/OpenComposite/bin/vrclient.dll", 0x14C),
+                                  ("Guest/x86/wvr_openxr.dll", 0x14C)):
+            self.pe(self.guest / relative, machine)
+
+    def pe(self, path, machine):
+        data = bytearray(512)
+        data[:2] = b"MZ"
+        data[0x3C:0x40] = (0x40).to_bytes(4, "little")
+        data[0x40:0x44] = b"PE\0\0"
+        data[0x44:0x46] = machine.to_bytes(2, "little")
+        data[0x54:0x56] = (240).to_bytes(2, "little")
+        data[0x58:0x5A] = (0x10B if machine == 0x14C else 0x20B).to_bytes(2, "little")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return path
+
+    def test_default_ignores_unused_source_farm_but_rejects_copying_x86_guests(self):
+        (self.source / "i386-windows/kernel32.dll").write_bytes(b"unused unvalidated source")
+        stage.validate_wine_resources(self.source)
+        self.assertFalse(any(name.startswith("i386-windows/") for name in receipt.guest_resource_files(self.source)))
+        target = self.root / "default-stage"
+        target.mkdir()
+        stage.copy_builtins(self.source, target)
+        self.assertFalse((target / "i386-windows").exists())
+        with self.assertRaisesRegex(SystemExit, "requires --enable-x86"):
+            stage.validate_guest_tree(self.guest)
+
+    def test_opt_in_copies_and_hashes_complete_i386_farm(self):
+        stage.validate_wine_resources(self.source, True)
+        stage.validate_guest_tree(self.guest, True)
+        self.pe(self.source / "i386-windows/codec.acm", 0x14C)
+        self.pe(self.source / "i386-windows/notepad.exe", 0x14C)
+        (self.source / "i386-windows/stdole2.tlb").write_bytes(b"type library data")
+        stage.validate_wine_resources(self.source, True)
+        target = self.root / "staged"
+        target.mkdir()
+        stage.copy_builtins(self.source, target, True)
+        self.assertEqual(receipt.guest_resource_files(target, True), receipt.guest_resource_files(self.source, True))
+        self.assertIn("i386-windows/kernel32.dll", receipt.guest_resource_files(target, True))
+        (target / "i386-windows/kernel32.dll").write_bytes(b"changed")
+        with self.assertRaisesRegex(SystemExit, "i386 PE"):
+            receipt.guest_resource_files(target, True)
+
+    def test_opt_in_rejects_missing_core_and_wrong_machine(self):
+        path = self.source / "i386-windows/kernel32.dll"
+        path.unlink()
+        with self.assertRaisesRegex(SystemExit, "missing required files"):
+            stage.validate_wine_resources(self.source, True)
+        self.pe(path, 0x8664)
+        with self.assertRaisesRegex(SystemExit, "i386 PE"):
+            stage.validate_wine_resources(self.source, True)
+        self.pe(path, 0x14C)
+
+    def test_guest_pair_rejects_incomplete_and_mismatched_architecture(self):
+        path = self.guest / "Guest/x86/wvr_openxr.dll"
+        path.unlink()
+        with self.assertRaisesRegex(SystemExit, "regular file"):
+            stage.validate_guest_tree(self.guest, True)
+        self.pe(path, 0x8664)
+        with self.assertRaisesRegex(SystemExit, "i386 PE"):
+            stage.validate_guest_tree(self.guest, True)
+        path.write_bytes(b"not a PE")
+        with self.assertRaisesRegex(SystemExit, "i386 PE"):
+            stage.validate_guest_tree(self.guest, True)
+
+    def test_wow64_receipt_binds_actual_arm64_build_bytes(self):
+        built = self.pe(self.root / "runtime/FEX/build-wow64/Bin/libwow64fex.dll", 0xAA64)
+        packaged = self.pe(self.source / "aarch64-windows/xtajit.dll", 0xAA64)
+        result = receipt.fex_wow64_build(self.root / "runtime", self.source)
+        self.assertEqual(result["sha256"], receipt.sha256_file(built))
+        packaged.write_bytes(packaged.read_bytes() + b"stale")
+        with self.assertRaisesRegex(SystemExit, "differs"):
+            receipt.fex_wow64_build(self.root / "runtime", self.source)
+        self.pe(packaged, 0x14C)
+        with self.assertRaisesRegex(SystemExit, "ARM64 PE"):
+            receipt.fex_wow64_build(self.root / "runtime", self.source)
+
+    def test_modern_native_dxmt_profile_cannot_be_mixed_with_wow64(self):
+        marker = self.root / "runtime/AVPPLAY_D3D12_SOURCE_PROVENANCE.json"
+        marker.parent.mkdir()
+        marker.write_text("{}")
+        with self.assertRaisesRegex(SystemExit, "legacy Madeira"):
+            receipt.fex_wow64_build(self.root / "runtime", self.source)
+        marker.unlink()
+        native = self.root / "runtime/build/ntdll-unix/virtual_ios.c"
+        native.parent.mkdir(parents=True)
+        native.write_text("#define WVR_DXMT_D3D12_PROFILE 1\n")
+        with self.assertRaisesRegex(SystemExit, "legacy Madeira"):
+            receipt.fex_wow64_build(self.root / "runtime", self.source)
+
+    def test_i386_imports_cover_guest_bridges_and_export_forwarders(self):
+        core = self.source / "i386-windows/kernel32.dll"
+        bridge = self.guest / "Guest/x86/wvr_openxr.dll"
+        tools = {"llvm-readobj": "readobj", "llvm-objdump": "objdump"}
+        def inspect(command, **kwargs):
+            if command[0] == "readobj":
+                return "  Name: KERNEL32.dll\n  Name: missing-delay.dll\n" if command[-1] == str(bridge) else ""
+            return "  Export forwarded (forwarded to absent.Function)" if command[-1] == str(core) else ""
+        with patch.object(imports.subprocess, "check_output", side_effect=inspect):
+            missing = imports.inspect_closure([core], tools, [bridge], "i386", True)
+        self.assertEqual(missing, {"absent.dll": ["kernel32.dll"], "missing-delay.dll": ["wvr_openxr.dll"]})
+        self.pe(bridge, 0x8664)
+        with patch.object(imports.subprocess, "check_output", return_value=""):
+            with self.assertRaisesRegex(ValueError, "expected i386"):
+                imports.inspect_closure([core], tools, [bridge], "i386", True)
+
+    def test_guest_shared_cxx_and_duplicate_module_are_rejected(self):
+        bridge = self.guest / "Guest/x86/wvr_openxr.dll"
+        tools = {"llvm-readobj": "readobj", "llvm-objdump": "objdump"}
+        with patch.object(imports.subprocess, "check_output", return_value="  Name: libc++.dll\n"):
+            with self.assertRaisesRegex(ValueError, r"shared C\+\+"):
+                imports.inspect_closure([], tools, [bridge], "i386", True)
+        with patch.object(imports.subprocess, "check_output", return_value=""):
+            with self.assertRaisesRegex(ValueError, "duplicate/case-colliding"):
+                imports.inspect_closure([bridge], tools, [bridge], "i386", True)
 
 
 class SourcePinTests(unittest.TestCase):

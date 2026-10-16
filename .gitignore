@@ -38,3 +38,5 @@ __pycache__/
 
 # Generated app-owned Windows VR smoke resources.
 visionos-windows-vr/Resources/VRSmoke/
+visionos-windows-vr/Resources/VRSmokeX86/
+visionos-windows-vr/.local.philip.x86.yml

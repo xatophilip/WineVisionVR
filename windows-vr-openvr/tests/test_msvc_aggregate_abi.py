@@ -22,6 +22,7 @@ for rel in ['scripts/stubs/codegen.py','OpenOVR/BaseCommon.h','OCOVR/openvr_api.
  p=patched/rel;p.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(up/rel,p)
 patch=Path(__file__).resolve().parents[1]/'patches/0007-mingw-msvc-aggregate-return.patch'
 subprocess.run(['git','apply',str(patch)],cwd=patched,check=True)
+subprocess.run(['git','apply',str(patch.with_name('0009-i386-msvc-aggregate-return.patch'))],cwd=patched,check=True)
 sys.path.insert(0,str(up/'scripts'))
 ns={};exec((patched/'scripts/stubs/codegen.py').read_text(),ns)
 class F:

@@ -112,3 +112,27 @@ the original complete vtable is restored before object destruction. The
 reproducible mixed-compiler regression is `tests/test_msvc_aggregate_abi.py`;
 see its `--help` for required host Wine/compiler paths. Its passing host result
 does not establish headset/FEX gameplay.
+
+## Experimental i386 guest
+
+Set `WINDOWS_VR_BUILD_X86=ON` with the LLVM-MinGW cross-build to add an x86
+variant alongside the unchanged default x64 variant. Each uses separate source,
+generated-code and build directories. The x86 output is
+`WindowsVR/Guest/x86/OpenComposite/bin/vrclient.dll`, while x64 keeps
+`vrclient_x64.dll`. Building the `OpenComposite_x86` target alone avoids
+rebuilding x64; `package_opencomposite` builds and stages both variants.
+
+Patch `0009-i386-msvc-aggregate-return.patch` adapts the outward OpenVR member
+vtable to MSVC's i386 `thiscall` aggregate-return ABI. MinGW normally places the
+result pointer before the receiver, and returns an 8-byte `HiddenAreaMesh_t` in
+registers; MSVC places the receiver in ECX and the result pointer on the stack
+for all five aggregate types. The adapters use explicit `thiscall` receiver and
+result parameters, retain qualified internal calls, and restore the complete
+native vtable before deletion. The existing x64 adapters remain separate.
+
+Run `tests/test_i386_msvc_aggregate_abi.py` with the pinned clean source,
+LLVM-MinGW and a fresh build directory. It verifies real MSVC caller lowering
+and links that caller with the production-generated MinGW adapters. Supply
+`--wine` and `--wine-prefix` only with a working i386-capable host Wine runtime
+to execute both the failing control and corrected fixture. The result records
+whether execution occurred; a linked PE alone does not establish game support.
