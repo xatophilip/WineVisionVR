@@ -9,15 +9,31 @@ checked in on `codex/local-build-and-benchmarks` in
 confirmed working on an M2 Vision Pro, visionOS 27.2, with PS VR2 Sense controllers.
 See [current game results](windows-vr-local-testing.md#current-game-status--17-october-2026).
 
-**A fresh clone has not yet been shown to recreate the exact working native
-runtime.** The tested app is a composite: current Swift frontend, three preserved
-known-working native frameworks, six newly built ARM64EC Wine DLLs and a rebuilt
-x64 Steam host. Its receipts distinguish inherited binaries from newly built
-resources. Do not describe its successful gameplay as validation of a fresh full
-source rebuild, or of the experimental 32-bit build.
+**Unsigned Debug and signed Release apps have now built successfully from a fresh
+GitHub checkout of the upstream integration candidate, through commit `0dca7af`.** See the
+[integration and build report](windows-vr-upstream-integration.md) for revisions,
+checks and product paths. The signed Release passed bundle/signing verification
+and installed on the paired headset. Physical gameplay acceptance remains
+separate; the new source-built app has not yet passed gameplay testing.
 
-The audit matched all 70 frontend/package/ABI source files recorded in the tested
-app's assembly manifest against the committed checkout, with no differences.
+The earlier gameplay-tested app is a composite: current Swift frontend, three
+preserved known-working native frameworks, six newly built ARM64EC Wine DLLs and
+a rebuilt x64 Steam host. Its receipts distinguish inherited binaries from newly
+built resources. Its Windlands and Job Simulator results do not validate the
+new integration candidate or experimental 32-bit build.
+
+The fresh-checkout build rebuilt the app-specific native runtime, Wine/DXMT guest
+DLLs, OpenVR/OpenXR packages, cache helpers, source AIR writer and frontend in new
+paths, using newly fetched pinned dependency sources. It reused the extracted
+LLVM-MinGW toolchain, the locked visionOS LLVM build cache, and an existing clean
+Wine prefix archive with its matching provenance. It did not reuse the preserved
+gameplay-tested runtime frameworks. This establishes a fresh project build with
+external dependency inputs, not an empty-machine rebuild of LLVM and the prefix
+host. The recipe below also describes regenerating those inputs.
+
+The historical composite audit matched all 70 frontend/package/ABI source files
+recorded in that tested app's assembly manifest against its committed checkout,
+with no differences.
 The six DLLs (`dwmapi`, `wsock32`, `avrt`, `vcruntime140`, `msvcp140`, `mmdevapi`)
 are in `build_wine_guest_resources.sh` and enforced by `stage_resources.py`.
 `build_steam_dock.sh` applies the tracked bounded-launch-arguments patch, and
@@ -42,9 +58,10 @@ hashes are recorded in [the runtime inventory](windows-vr-runtime-inventory.json
 | Full Xcode 27, visionOS 27 SDK and Metal Toolchain | Install Xcode; select its developer directory. Use `xcodebuild -downloadComponent MetalToolchain` if absent. |
 | Git, Python 3, CMake 3.28+, Ninja, Meson, XcodeGen, Bison 3 | Install on the build Mac; place Bison 3 ahead of Apple's Bison on `PATH`. |
 | Pinned LLVM-MinGW 20260421 UCRT macOS universal | Download/extract the release linked in the [tooling recipe](../windows-vr-tools/README.md#assembly-order); verify its documented SHA-256. |
+| Locked native visionOS LLVM libraries | `prepare_llvm.sh build`, invoked by assembly, builds the revision in `llvm.lock.json`. A matching external LLVM source/build cache may be reused via `AVPPLAY_LLVM_TOOLCHAINS_ROOT`; this is distinct from LLVM-MinGW. |
 | Madeira, Wine, FEX, DXMT, OpenXR/OpenVR/OpenComposite, FreeType sources | Acquire with `fetch_sources.py`; `sources.lock.json` and recursive submodule gitlinks select revisions. Their licenses are retained/staged. |
 | Clean Wine prefix archive and provenance | Generate with the pinned host Wine and `create_prefix_snapshot.sh`, as below. Do not copy a used Steam/game prefix. |
-| Apple signing identity and development profile | Use your own Xcode team, certificate/private key and paired headset. The profile must allow debugging/JIT and the increased-memory entitlement. |
+| Apple signing identity and development profile | Needed for signing and headset installation, not unsigned compilation. Use your own Xcode team, certificate/private key and paired headset. The profile must allow debugging/JIT and the increased-memory entitlement. |
 | JIT helper and pairing | Install/prepare StikDebug and LocalDevVPN on your headset; complete your own RemotePairing. |
 | Owned games | Sign into your own Steam account in WineVision; prepare the Valve client and download games there. |
 | Exact previously working native binaries | Retained on XRDev for the checkpoint route below. A clean full source build is the alternative, but equivalent headset behavior still needs testing. |
@@ -57,8 +74,9 @@ another developer's identity.
 
 ## Clean source build using the modern profile
 
-This is the tracked full-build route. It may need build repairs and headset
-validation before it is equivalent to the retained working package. Allow ample
+This is the tracked full-build route. Compilation and packaging have succeeded;
+headset validation is still needed before it replaces the retained working
+package. Allow ample
 external storage and time for LLVM, Wine and DXMT compilation. Use fresh source
 and build paths; do not overwrite the working XRDev profile or resource stage.
 
@@ -68,16 +86,23 @@ git clone --branch codex/local-build-and-benchmarks \
 cd WineVisionVR
 export DEVELOPER_DIR="$(xcode-select -p)"
 export WVR_WORK="/absolute/path/to/new-winevision-build"
+export TMPDIR="$WVR_WORK/tmp"
+export CLANG_MODULE_CACHE_PATH="$WVR_WORK/module-cache"
+mkdir -p "$WVR_WORK" "$TMPDIR" "$CLANG_MODULE_CACHE_PATH"
 export AVPPLAY_SOURCE_CACHE_ROOT="$WVR_WORK/source-cache"
 export AVPPLAY_LLVM_MINGW_ROOT="/absolute/path/to/llvm-mingw-20260421-ucrt-macos-universal"
 export AVPPLAY_MADEIRA_SOURCE_ROOT="$AVPPLAY_SOURCE_CACHE_ROOT/madeira"
-export AVPPLAY_DEVELOPMENT_TEAM="YOUR_TEAM_ID"
 export AVPPLAY_BUILD_JOBS=4
 python3 windows-vr-tools/fetch_sources.py \
   --cache-root "$AVPPLAY_SOURCE_CACHE_ROOT" --include-d3d12-experimental
 ```
 
-Create the clean prefix once. The x86-64 host runs through Rosetta on Apple
+Create the clean prefix once, or supply an existing clean archive and its
+matching provenance through `AVPPLAY_WINE_PREFIX_TEMPLATE` and
+`AVPPLAY_WINE_PREFIX_PROVENANCE`. Assembly validates this pair; a used game prefix
+is not an acceptable replacement. The fresh-checkout validation reused this
+previously generated input rather than rebuilding the prefix host.
+The x86-64 host runs through Rosetta on Apple
 silicon; install Apple's Rosetta if it is not available. This stage executes
 Wine to initialize a clean prefix, not a game:
 
@@ -113,21 +138,52 @@ export AVPPLAY_ENABLE_X86=0
 export AVPPLAY_RUNTIME_SOURCE="$WVR_WORK/runtime-baseline"
 export AVPPLAY_D3D12_PROFILE_SOURCE="$WVR_WORK/runtime-modern"
 export AVPPLAY_BUILD_ROOT="$WVR_WORK/artifacts"
+export AVPPLAY_D3D12_BUILD_ROOT="$AVPPLAY_BUILD_ROOT/modern-build"
 export AVPPLAY_LLVM_TOOLCHAINS_ROOT="$WVR_WORK/llvm-toolchains"
+export AVPPLAY_SIGN_APP=0
+mkdir -p "$AVPPLAY_BUILD_ROOT" "$AVPPLAY_D3D12_BUILD_ROOT"
 bash windows-vr-tools/assemble_runtime.sh
+export WVR_UNSIGNED_APP="$AVPPLAY_BUILD_ROOT/xcode-derived/Build/Products/Debug-xros/WineVision VR.app"
 ```
 
-The assembler builds Debug, stages runtime/guest resources with matching receipts,
-and builds the app. For the modern profile it also compiles the matching source
+`AVPPLAY_D3D12_BUILD_ROOT`, when supplied, must already be an absolute directory;
+the graphics builder refuses a missing directory. A custom `TMPDIR` must also
+exist. The assembler creates `AVPPLAY_BUILD_ROOT` itself, but that does not create
+arbitrary nested output paths.
+
+For a cached dependency build, set `AVPPLAY_LLVM_TOOLCHAINS_ROOT` to an existing
+matching LLVM source/build cache before assembly instead. `prepare_llvm.sh`
+verifies the locked clean source and configures/builds its host tools and visionOS
+archives incrementally. Leave the new path above to build this dependency afresh.
+Neither route substitutes an old Wine/FEX/DXMT runtime for the new source build.
+
+The assembler stages runtime/guest resources with matching receipts and builds
+an unsigned Debug app when `AVPPLAY_SIGN_APP=0`; no development team is required.
+That product cannot be installed on the headset. For the modern profile it also
+compiles the matching source
 AIR writer into `$AVPPLAY_BUILD_ROOT/air-writer` and generates the app using
 `project.source-air.yml`; legacy/x86 profiles use the compatibility fallback in
 `project.yml`. The source AIR archive is generated from the patched DXMT and
-locked visionOS LLVM libraries and is not a retained external binary. The current generic spec uses
+locked visionOS LLVM libraries and linked through its library search path; it is
+not a retained external binary. Native Wine headers/tools are prepared from clean
+source, Dock notices are generated from the pinned license texts, and x86 smoke
+resources are included only in the experimental x86 project specification.
+These repairs are tracked, rather than manual changes to generated output.
+
+Assembly is not globally resumable. Prepared baseline reuse is explicit, while
+modern profile preparation and AIR writer generation refuse existing outputs.
+After an interruption, inspect the completed stage and use its documented build
+step, or choose fresh runtime/profile/artifact paths. Setting
+`AVPPLAY_REUSE_PREPARED_SOURCE=1` alone does not make a complete rerun safe. Preserve
+logs and receipts instead of deleting the known-working checkpoint.
+
+The current generic spec uses
 `org.avpplay.visionos-windows-vr`; an existing installation with a different bundle
 ID has separate data, games and sign-in. For your own ID, benchmark diagnostics
 or a Release development build, use an ignored local override after assembly:
 
 ```sh
+export AVPPLAY_DEVELOPMENT_TEAM="YOUR_TEAM_ID"
 export WVR_BUNDLE_IDENTIFIER="com.example.WineVisionVR"
 python3 - <<'PY'
 import json, os, pathlib, plistlib
@@ -214,8 +270,10 @@ preserve that package.
 6. Between games, end the session and use **Force quit app**, then reopen when a
    fresh Wine process is required. This discards unsaved Windows work.
 
-The remaining reproducibility acceptance gate is a complete build in new paths
-from this branch, followed by these physical Windlands and Job Simulator checks.
-No such clean rebuild or new headset run was performed during this documentation
-audit. Historical failure notes in older handoff files remain for investigation;
-this page is the current build/recovery handoff.
+The fresh GitHub checkout has passed unsigned and signed Release compilation,
+packaging and signing/profile verification in new paths with the external inputs
+stated above. The signed app is installed. These physical Windlands and Job
+Simulator checks remain the acceptance gate; successful gameplay has not yet
+been established for the new source-built candidate. Consult the [integration and build report](windows-vr-upstream-integration.md)
+for the latest signed-product status. Historical failure notes in older handoff
+files remain for investigation; this page is the current build/recovery handoff.

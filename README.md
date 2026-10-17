@@ -24,10 +24,21 @@ https://ko-fi.com/hudsonmcox
 visionOS 27.2 with PS VR2 Sense controllers.** The user confirmed both games
 working, including starting a level and using the controls in Windlands.
 
-These are gameplay confirmations, not sustained stability or performance
-benchmarks. Fantastic Contraption still freezes/crashes; Google Earth VR and
+These results apply to the preserved working build. The user reports acceptable
+speed in Windlands and Job Simulator; these are not measured FPS benchmarks.
+Fantastic Contraption is very slow and has frozen/crashed; Google Earth VR and
 Audioshield remain unresolved. See the [local testing record](docs/windows-vr-local-testing.md#current-game-status--17-october-2026)
 for evidence and limitations.
+
+### Upstream integration and fresh build, 17 October 2026
+
+Upstream changes through `76bf424` are merged with this fork. A fresh GitHub
+checkout built unsigned Debug and signed Release apps, with newly compiled native
+runtime components and documented external compiler/prefix inputs. The signed
+candidate passed package/signing checks and is installed; headset gameplay
+validation is still pending. See the [integration/build report](docs/windows-vr-upstream-integration.md)
+and [rebuild instructions](docs/windows-vr-reproducibility.md). No new game FPS or
+Fantastic Contraption fix is claimed.
 
 ### Upstream baseline, 14 October 2026
 
