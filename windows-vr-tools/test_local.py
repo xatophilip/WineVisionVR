@@ -80,6 +80,8 @@ def main():
                       'windows-vr-tools/tests', '-v'])
     run('session-diagnostics', [python, 'visionos-windows-vr/Tests/Contracts/test_session_diagnostics.py',
                                  '--build', build / 'session-diagnostics'])
+    run('guest-startup-watchdog', [python, 'visionos-windows-vr/Tests/Contracts/test_guest_startup_watchdog.py',
+                                    '--build', build / 'guest-startup-watchdog'])
     run('vr-registration', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration.py'])
     run('vr-registration-architecture', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration_architecture.py',
                                            '--build', build / 'vr-registration-architecture'])

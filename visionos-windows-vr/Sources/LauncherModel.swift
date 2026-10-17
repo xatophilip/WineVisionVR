@@ -26,6 +26,28 @@ private func logImageBases() {
     }
 }
 
+/// Startup evidence only: ntdll has loaded, not proof the game is ready.
+private enum GuestStartupLog {
+    static let maximumBytes = 3_000_000
+
+    static func hasLoadedNTDLL(at log: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: log) else { return false }
+        defer { try? handle.close() }
+        do {
+            // seekToEnd leaves the cursor at EOF; an EOF read can be empty Data,
+            // so do not depend on a nil-coalescing fallback to rewind it.
+            try handle.seek(toOffset: 0)
+            guard let data = try handle.read(upToCount: maximumBytes) else { return false }
+            let text = String(decoding: data, as: UTF8.self)
+            return text.contains("XLATE-HOOK installed") ||
+                text.contains("XLATE-HOOK-REV installed p_ios_jit_reverse_translate_addr=") ||
+                text.contains("[wow-image] i386 ntdll guest=")
+        } catch {
+            return false
+        }
+    }
+}
+
 struct TransferredWindowsVRGame: Identifiable {
     let id: String
     let manifest: WindowsGameManifest
@@ -1250,7 +1272,6 @@ final class LauncherModel {
     /// ntdll, so the debugger waits for a second handshake that never comes). The runtime cannot be restarted in
     /// this process, so say so quickly instead of leaving a silent, empty headset.
     private func watchGuestStartup() {
-        let marker = "XLATE-HOOK installed"
         guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
         let log = documents.appendingPathComponent("madeira-log.txt")
         Task { [weak self] in
@@ -1258,15 +1279,9 @@ final class LauncherModel {
             while ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, self.hasAcceptedLaunch else { return }
-                if let handle = try? FileHandle(forReadingFrom: log) {
-                    defer { try? handle.close() }
-                    let size = (try? handle.seekToEnd()) ?? 0
-                    if size > 0, let data = try? handle.read(upToCount: Int(min(size, 3_000_000))) ??
-                        (try? { try handle.seek(toOffset: 0); return try handle.read(upToCount: Int(min(size, 3_000_000))) }()),
-                       String(decoding: data, as: UTF8.self).contains(marker) {
-                        launchLog.notice("Guest startup: ntdll loaded, the emulated Windows process is running")
-                        return
-                    }
+                if GuestStartupLog.hasLoadedNTDLL(at: log) {
+                    launchLog.notice("Guest startup: ntdll loaded, the emulated Windows process is running")
+                    return
                 }
             }
             guard let self, self.hasAcceptedLaunch else { return }

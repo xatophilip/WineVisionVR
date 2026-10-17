@@ -1,8 +1,8 @@
 # Modern 32-bit Windows support — development status
 
 This work is isolated on `codex/modern-x86-support`. It is not part of the
-published working branch or the currently installed main app. No 32-bit game
-is confirmed playable by these changes yet.
+published working branch or the currently installed main app. The authored 32-bit desktop app now executes on the headset, but mouse input
+still fails its test. No 32-bit game is confirmed playable by these changes yet.
 
 ## Problems found in captured diagnostics
 
@@ -181,3 +181,30 @@ endpoints before pairing. Its complete source delta, upstream pin, AGPL license
 and reproduction instructions are in [the dependency note](dependencies/stikdebug-timeout/README.md).
 The helper passes host socket tests and signing verification; Xcode activation
 still timed out after installation, so headset tunnel recovery is unverified.
+
+
+## First modern 32-bit headset execution
+
+After reconnecting StikDebug, the separate app attached its debugger at 19:28:30
+on 17 October and launched the authored i386 desktop executable through WOW64/FEX.
+The PE probe reported `machine=0x14c`; the trace loaded the i386 main image, ntdll,
+GDI and the Windows desktop test window. The freshly generated file under
+`Documents/WindowsVR/Apps/DesktopDemoX86/demo-selftest-result.txt` reported:
+
+```text
+FAIL GDI desktop self-test pointerBits=32 SendInput=0 edit=1 button=1 save=1 load=1 UTF8roundtrip=1
+```
+
+Here `SendInput=0` means the injected click did not increment the counter, not
+that the API rejected its events: the event trace explicitly accepted two events.
+The EDIT handler, programmatic button handler and UTF-8 save/load round trip passed.
+The user independently confirmed that tapping Count clicks did not increment it.
+Button traces show mouse-up without the corresponding mouse-down, while parent
+windows receive other pointer events. Pointer routing remains unresolved.
+
+The launcher also falsely reported a startup stall despite that execution: its
+watchdog used a forward-translation-only marker that missed the actual WOW64
+ntdll startup markers. It also sought to EOF before reading and relied on a
+platform-dependent nil-versus-empty-Data fallback to rewind.
+That diagnostic bug is separate from the pointer failure. These results prove
+32-bit desktop execution, not correct mouse controls, D3D11 rendering or gameplay.
