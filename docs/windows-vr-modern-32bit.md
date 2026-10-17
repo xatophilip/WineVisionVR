@@ -170,3 +170,14 @@ stage the modern profile and retest Space Pirate Trainer before calling this
 fixed on device. Only the right controller was tracked in the saved capture;
 that is a separate possible explanation for incomplete controls, not the
 logging exception.
+
+
+## Debugger tunnel timeout repair
+
+The disconnected helper's nominal two-second TCP probe used a blocking connect,
+which actually stalled for about 75 seconds per stale address. A separately
+built and installed StikDebug repair bounds that probe and skips timed-out
+endpoints before pairing. Its complete source delta, upstream pin, AGPL license
+and reproduction instructions are in [the dependency note](dependencies/stikdebug-timeout/README.md).
+The helper passes host socket tests and signing verification; Xcode activation
+still timed out after installation, so headset tunnel recovery is unverified.
