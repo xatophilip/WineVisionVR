@@ -113,6 +113,16 @@ func expectCancellation(_ task: Task<Data, Error>) async throws {
         try check(try await count(base, failurePath) == 2, "HTTP failure must leave the URL retryable")
         print("PASS: HTTP 500 rejection, no successful cache entry and retry")
 
+        let immediateTransport = transport(root.appendingPathComponent("startup-cancellation", isDirectory: true))
+        let immediatePath = path("7")
+        let immediatelyCancelled = Task<Data, Error> {
+            try await immediateTransport.data(for: request(base, immediatePath))
+        }
+        immediatelyCancelled.cancel()
+        try await expectCancellation(immediatelyCancelled)
+        let afterStartupCancellation = try await immediateTransport.data(for: request(base, immediatePath))
+        try check(afterStartupCancellation == payload(immediatePath), "Cancellation during session startup must not hang or poison a later request")
+
         let cancelled = transport(root.appendingPathComponent("cancelled", isDirectory: true))
         let preCancelledPath = path("6")
         let before = Task<Data, Error> {
@@ -202,7 +212,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
             digit = path.rsplit("/", 1)[-1][0]
             if digit == "3" and ordinal == 1:
                 time.sleep(1.5)
-            elif digit == "4":
+            elif digit in ("4", "7"):
                 time.sleep(0.5)
             code = 500 if digit == "2" else 200
             body = ("server-error" if code != 200 else "encrypted-fixture:" + path).encode()

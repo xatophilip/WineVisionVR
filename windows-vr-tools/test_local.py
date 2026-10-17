@@ -84,6 +84,8 @@ def main():
                                      '--build', build / 'steam-guest-architecture'])
     run('steam-download-queue', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_queue.py',
                                   '--build', build / 'steam-download-queue'])
+    run('steam-background-transfers', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_background_transfers.py',
+                                      '--build', build / 'steam-background-transfers'])
     run('steam-download-sizes', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_sizes.py',
                                   '--build', build / 'steam-download-sizes'])
     run('graphics-profile-link', [python, 'windows-runtime-plugin/Tests/test_graphics_profile_link.py',
