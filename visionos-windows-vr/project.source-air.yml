@@ -10,3 +10,4 @@ targets:
     settings:
       base:
         GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "WVR_SOURCE_AIR_WRITER=1"]
+        LIBRARY_SEARCH_PATHS: ["$(inherited)", "${AVPPLAY_AIR_OUTPUT}"]
