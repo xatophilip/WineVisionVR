@@ -219,3 +219,27 @@ on activation failure only if that root is not active. Intentional
 execute the production activation branch and cover those cases. This changes
 the baseline source fingerprint and requires a fresh build; the installed app
 does not yet contain the fix, and physical clicking must be retested.
+
+
+## Clean rebuild containing the input and logger repairs
+
+Commit `3346430` was exported into a new source directory with no generated
+Resources, native archives or Windows guest DLLs copied from the previous build.
+The standard assembler rebuilt the baseline, modern profile, both translators,
+Wine guest modules, modern graphics DLLs, AIR writer and final source-matched
+resource closure. It reused the pinned compiler/toolchain cache, verified source
+downloads and provenance-backed prefix template. Both full app assembly and
+signed Release completed successfully.
+
+The separate test app UUID `3818D44F-608E-3315-AF8C-A2034F6BC4FB` was verified
+and installed on 17 October. It contains mouse patch `0013`, DXMT logger patch
+`0026` and the startup-watchdog correction. Signature, debugging, diagnostics
+and increased-memory entitlements passed verification. The normal app was not
+replaced. Xcode's subsequent activation request timed out with no fresh startup
+log; manual opening and a new mouse/self-test result remain required.
+
+Build inputs, complete logs, signing verification and install receipt are
+retained locally under `x86-modern-oct17-r3`. A newer codesign tool defaults to
+abstract entitlement output; the external verification script explicitly uses
+`--xml` before parsing it. This was a verification-script correction after a
+successful signed build, not an app source or signing change.
