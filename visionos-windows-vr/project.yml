@@ -103,10 +103,6 @@ targets:
       - path: Resources/WindowsVR
         type: folder
         buildPhase: resources
-      - path: Resources/VRSmokeX86
-        optional: true
-        type: folder
-        buildPhase: resources
       - path: Resources/VRSmoke
         type: folder
         buildPhase: resources

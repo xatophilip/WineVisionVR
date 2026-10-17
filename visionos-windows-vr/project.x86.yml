@@ -1,0 +1,10 @@
+# Experimental x86 packaging is explicit: XcodeGen optional folder resources
+# otherwise produce a Copy Bundle Resources step even when the folder is absent.
+include:
+  - project.yml
+targets:
+  VisionOSWindowsVR:
+    sources:
+      - path: Resources/VRSmokeX86
+        type: folder
+        buildPhase: resources

@@ -211,6 +211,9 @@ fi
 # native AIR writer from the same patched DXMT and locked LLVM source closure.
 # Legacy/x86 builds retain the compatibility fallback in project.yml.
 app_spec="$ROOT/visionos-windows-vr/project.yml"
+if [[ "$x86_enabled" == 1 ]]; then
+    app_spec="$ROOT/visionos-windows-vr/project.x86.yml"
+fi
 if [[ "$d3d12_enabled" == 1 ]]; then
     export AVPPLAY_AIR_OUTPUT="${AVPPLAY_AIR_OUTPUT:-$BUILD_ROOT/air-writer}"
     AVPPLAY_AIR_DXMT_SOURCE="$runtime_source/dxmt" \
@@ -255,6 +258,9 @@ python3 "$ROOT/windows-vr-tools/stage_resources.py" "${stage_args[@]}"
 AVPPLAY_MADEIRA_STEAM_SOURCE="$source_cache/madeira" bash "$ROOT/windows-vr-tools/build_steam_dock.sh"
 bash "$ROOT/windows-vr-tools/build_desktop_demo.sh"
 bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
+if [[ "$x86_enabled" == 1 ]]; then
+    AVPPLAY_VR_SMOKE_ARCH=x86 bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
+fi
 
 xcodegen generate --spec "$app_spec" \
     --project "$ROOT/visionos-windows-vr"

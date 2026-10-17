@@ -436,6 +436,12 @@ pointer transport, so its native archive must never be combined with these
 legacy i386 graphics DLLs. Default 64-bit resources and the installed-build
 rollback are kept separately.
 
+The assembler selects `visionos-windows-vr/project.x86.yml` and builds the
+32-bit VR smoke scene only when this x86 opt-in is enabled. For manual XcodeGen
+generation of an already staged experimental package, use that spec (and include
+it alongside `project.benchmark.yml` for diagnostics). Its `Resources/VRSmokeX86`
+folder is required; ordinary 64-bit packages do not reference it.
+
 The candidate adds freshly built i386 Wine/DXMT, native ARM64 WOW64 helpers,
 FEX WOW64, and separately staged x86 OpenComposite/OpenXR DLLs. The real Steam
 child executable supplies `guestArchitecture` through the manifest while Steam's
