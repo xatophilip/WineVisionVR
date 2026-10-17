@@ -569,10 +569,8 @@ final class LauncherModel {
     /// Steam's 64-bit launch host may start a 32-bit game. Select the VR
     /// package from that game's actual installed PE header, without running it.
     nonisolated static func steamGuestArchitecture(option: SteamLaunchOption?, game: DockGame, drive: URL) -> WindowsGuestArchitecture? {
-        guard let option, isSafeSteamExecutable(option.executable) else { return nil }
-        let folder = drive.appendingPathComponent(game.library + "/common/" + game.installDir).resolvingSymlinksInPath()
-        let executable = folder.appendingPathComponent(option.executable.replacingOccurrences(of: "\\", with: "/")).resolvingSymlinksInPath()
-        guard executable.path.hasPrefix(folder.path + "/"),
+        guard let option,
+              let executable = SteamInstalledExecutable.resolve(option.executable, game: game, drive: drive),
               let size = (try? executable.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])),
               size.isRegularFile == true, let count = size.fileSize, count >= 70,
               let file = try? FileHandle(forReadingFrom: executable) else { return nil }
@@ -585,12 +583,6 @@ final class LauncherModel {
               let pe = try? file.read(upToCount: 6), pe.count == 6,
               Array(pe.prefix(4)) == [0x50, 0x45, 0, 0] else { return nil }
         return UInt16(pe[4]) | (UInt16(pe[5]) << 8) == 0x14c ? .x86 : nil
-    }
-
-    nonisolated private static func isSafeSteamExecutable(_ path: String) -> Bool {
-        let normalized = path.replacingOccurrences(of: "\\", with: "/")
-        return !normalized.isEmpty && !normalized.hasPrefix("/") && !normalized.contains(":") &&
-            normalized.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
     /// Older verified native plugins do not understand the architecture field.

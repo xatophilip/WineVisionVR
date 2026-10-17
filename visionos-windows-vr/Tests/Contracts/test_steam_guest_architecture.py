@@ -54,6 +54,8 @@ func inspect(_ path: String) -> WindowsGuestArchitecture? {
 try pe("game32.exe", 0x14c)
 try pe("game64.exe", 0x8664)
 try check(inspect("game32.exe") == .x86, "32-bit Steam child must select 32-bit VR DLLs")
+try pe("dosbox.exe", 0x14c)
+try check(inspect("DOSBox.exe") == .x86, "Mixed-case Steam metadata must detect the actual 32-bit DOSBox child")
 try check(inspect("game64.exe") == nil, "64-bit game retains existing default runtime selection")
 try check(inspect("missing.exe") == nil, "Missing game does not invent architecture")
 try check(inspect("../Fixture/game32.exe") == nil, "Reject traversal")
@@ -93,7 +95,7 @@ class SteamLibraryModel {
     static let shared = SteamLibraryModel()
     var games: [CatalogEntry] = []
     static func isInstalled(_ option: SteamLaunchOption, game: DockGame, drive: URL) -> Bool {
-        FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/common/" + game.installDir + "/" + option.executable).path)
+        SteamInstalledExecutable.resolve(option.executable, game: game, drive: drive) != nil
     }
     static func preferredLaunchOption(_ options: [SteamLaunchOption], game: DockGame, drive: URL) -> SteamLaunchOption? {
         options.first { isInstalled($0, game: game, drive: drive) }
@@ -178,7 +180,8 @@ try check(!Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: t
 print("PASS: actual PE architecture, restored Steam/profile fields, option reconciliation, direct manifests and x86-only package guard")
 '''.replace('METHODS', methods).replace('PRODUCTIONMANIFEST', manifest).replace('ARCHBODY', methods).replace('RESTOREBODY', restore).replace('EFFECTIVEBODY', effective)
 unit = args.build / 'SteamArchitecture.swift'
-unit.write_text(probe)
+resolver = (root / 'visionos-windows-vr/Sources/Steam/SteamInstalledExecutable.swift').read_text()
+unit.write_text(resolver + probe)
 binary = args.build / 'steam-architecture'
 subprocess.run(['xcrun', 'swiftc', str(unit), '-o', str(binary)], check=True)
 with tempfile.TemporaryDirectory(prefix='fixture-', dir=args.build) as fixture:

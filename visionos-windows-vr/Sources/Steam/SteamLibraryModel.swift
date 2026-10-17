@@ -432,10 +432,15 @@ final class SteamLibraryModel: ObservableObject {
     /// that is not installed), and starting a missing program fails with Steam's "could not find
     /// the game's executable" refusal.
     nonisolated static func isInstalled(_ option: SteamLaunchOption, game: DockGame, drive: URL) -> Bool {
-        let relative = option.executable.replacingOccurrences(of: "\\", with: "/")
-        guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.contains("..") else { return false }
-        let folder = drive.appendingPathComponent(game.library + "/common/" + game.installDir, isDirectory: true)
-        return FileManager.default.fileExists(atPath: folder.appendingPathComponent(relative).path)
+        SteamInstalledExecutable.resolve(option.executable, game: game, drive: drive) != nil
+    }
+
+    /// Hide metadata entries for other platforms or programs absent from this install.
+    nonisolated static func installedLaunchOptions(_ options: [SteamLaunchOption], game: DockGame, drive: URL) -> [SteamLaunchOption] {
+        options.filter {
+            ($0.oslist.isEmpty || $0.oslist.lowercased().contains("windows")) &&
+                isInstalled($0, game: game, drive: drive)
+        }
     }
 
     /// OpenComposite supplies SteamVR/OpenVR. Prefer that route over another VR
@@ -448,8 +453,7 @@ final class SteamLibraryModel: ObservableObject {
     /// The launch option to start by default: installed Windows entries, with
     /// SteamVR first. Returns nil when no Windows executable can be found.
     nonisolated static func preferredLaunchOption(_ options: [SteamLaunchOption], game: DockGame, drive: URL) -> SteamLaunchOption? {
-        let windows = options.filter { $0.oslist.isEmpty || $0.oslist.lowercased().contains("windows") }
-        let present = windows.filter { isInstalled($0, game: game, drive: drive) }
+        let present = installedLaunchOptions(options, game: game, drive: drive)
         return preferredVRLaunchOption(present)
             ?? present.first(where: { $0.type.isEmpty || $0.type == "default" })
             ?? present.first
@@ -472,17 +476,26 @@ final class SteamLibraryModel: ObservableObject {
         do {
             try MadeiraDock.validate(game, drive: MadeiraDock.drive)
             error = nil
-            let options = entry.game.launches ?? []
-            let preferred = Self.preferredLaunchOption(options, game: game, drive: MadeiraDock.drive)
-                ?? Self.preferredVRLaunchOption(options)
-                ?? options.first(where: { $0.type.isEmpty || $0.type == "default" })
-                ?? options.first
+            let launches = entry.game.launches ?? []
+            guard !launches.isEmpty else {
+                error = "Launch information is unavailable. Refresh the library and try again."
+                resumeAfterLaunchFailure()
+                return
+            }
+            let options = Self.installedLaunchOptions(launches, game: game, drive: MadeiraDock.drive)
+            let selected = launchOption.flatMap { index in options.first { $0.index == index } }
+                ?? (launchOption == nil ? Self.preferredLaunchOption(options, game: game, drive: MadeiraDock.drive) : nil)
+            guard let index = selected?.index else {
+                error = "No installed Windows executable was found for this launch option. Update / repair the game and try again."
+                resumeAfterLaunchFailure()
+                return
+            }
             guard let onPlaySelected else {
                 error = "The WineVision VR launcher is not ready yet."
                 resumeAfterLaunchFailure()
                 return
             }
-            onPlaySelected(game, launchOption ?? preferred?.index ?? 0)
+            onPlaySelected(game, index)
         } catch {
             self.error = error.localizedDescription
             resumeAfterLaunchFailure()

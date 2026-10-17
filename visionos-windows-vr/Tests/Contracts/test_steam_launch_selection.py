@@ -105,6 +105,60 @@ for path in ["../outside.exe", "/absolute.exe"] {
     var unsafe = steamVR; unsafe.executable = path
     check(!SteamLibraryModel.isInstalled(unsafe, game: game, drive: directory), "Reject unsafe launch paths")
 }
+
+let dosGame = DockGame(library: "Steam/steamapps", installDir: "Tomb Raider I")
+let dosFolder = directory.appendingPathComponent("Steam/steamapps/common/Tomb Raider I")
+try FileManager.default.createDirectory(at: dosFolder, withIntermediateDirectories: true)
+try Data().write(to: dosFolder.appendingPathComponent("dosbox.exe"))
+let dosOptions = [SteamLaunchOption(executable: "DOSBox.exe", index: 0),
+                  SteamLaunchOption(executable: "tombati.exe", index: 2),
+                  SteamLaunchOption(executable: "tombub.exe", index: 3)]
+check(SteamLibraryModel.installedLaunchOptions(dosOptions, game: dosGame, drive: directory).map(\.index) == [0],
+      "DOSBox case mismatch must retain the one installed option and hide absent alternatives")
+check(SteamLibraryModel.preferredLaunchOption(dosOptions, game: dosGame, drive: directory)?.index == 0,
+      "The sole installed DOSBox option must select automatically")
+let nested = dosFolder.appendingPathComponent("Tools/Runtime", isDirectory: true)
+try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+try Data([1]).write(to: nested.appendingPathComponent("program.exe"))
+check(SteamInstalledExecutable.resolve("tools\\RUNTIME\\Program.EXE", game: dosGame, drive: directory)?.lastPathComponent == "program.exe",
+      "Every Windows path component must resolve case-insensitively")
+check(SteamInstalledExecutable.resolve(".\\DOSBox.exe", game: dosGame, drive: directory)?.lastPathComponent == "dosbox.exe",
+      "Windows current-directory prefixes must remain usable")
+check(SteamInstalledExecutable.resolve("Tools/./Runtime/Program.EXE", game: dosGame, drive: directory)?.lastPathComponent == "program.exe",
+      "Harmless current-directory components must normalize without allowing traversal")
+check(SteamInstalledExecutable.resolve("Tools", game: dosGame, drive: directory) == nil,
+      "A directory is never a launchable executable")
+for invalid in ["", ".", "..", "../dosbox.exe", "/dosbox.exe", "C:\\dosbox.exe", "Tools//program.exe", "dosbox.exe\0"] {
+    check(SteamInstalledExecutable.resolve(invalid, game: dosGame, drive: directory) == nil,
+          "Reject malformed Windows executable path: \(invalid.debugDescription)")
+}
+let outside = directory.appendingPathComponent("external", isDirectory: true)
+try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+try Data([1]).write(to: outside.appendingPathComponent("outside.exe"))
+try FileManager.default.createSymbolicLink(at: dosFolder.appendingPathComponent("Escaped"), withDestinationURL: outside)
+check(SteamInstalledExecutable.resolve("escaped/OUTSIDE.EXE", game: dosGame, drive: directory) == nil,
+      "Case-insensitive resolution must reject a directory symlink leaving the installation")
+try FileManager.default.createSymbolicLink(at: dosFolder.appendingPathComponent("outside.exe"), withDestinationURL: outside.appendingPathComponent("outside.exe"))
+check(SteamInstalledExecutable.resolve("outside.exe", game: dosGame, drive: directory) == nil,
+      "Exact file resolution must also reject an escaping symlink")
+try FileManager.default.createSymbolicLink(at: outside.appendingPathComponent("back"), withDestinationURL: nested)
+check(SteamInstalledExecutable.resolve("Escaped/back/program.exe", game: dosGame, drive: directory) == nil,
+      "A symlink must not leave the installation even if a later link returns inside")
+try Data([1]).write(to: dosFolder.appendingPathComponent("Choice.exe"))
+try Data([2]).write(to: dosFolder.appendingPathComponent("choice.exe"))
+let ambiguous = try FileManager.default.contentsOfDirectory(atPath: dosFolder.path).filter { $0.lowercased() == "choice.exe" }
+check(SteamInstalledExecutable.uniqueCaseInsensitiveMatch("CHOICE.EXE", entries: [
+    dosFolder.appendingPathComponent("Choice.exe"), dosFolder.appendingPathComponent("choice.exe")]) == nil,
+      "Case-insensitive directory matching must reject ambiguity on every host filesystem")
+if ambiguous.count == 2 {
+    check(SteamInstalledExecutable.resolve("CHOICE.EXE", game: dosGame, drive: directory) == nil,
+          "A fallback with two differently cased names must not guess")
+    check(SteamInstalledExecutable.resolve("Choice.exe", game: dosGame, drive: directory)?.lastPathComponent == "Choice.exe",
+          "An exact installed spelling wins before any ambiguous fallback")
+} else {
+    print("SKIP: this fixture filesystem cannot represent ambiguous case variants")
+}
+
 let labels = LabelProbe()
 let steamLabel = labels.label(steamVR), oculusLabel = labels.label(oculus), desktopLabel = labels.label(desktop)
 check(Set([steamLabel, oculusLabel, desktopLabel]).count == 3,
@@ -112,12 +166,13 @@ check(Set([steamLabel, oculusLabel, desktopLabel]).count == 3,
 check(steamLabel.contains("SteamVR / OpenVR"), "Identify the supported SteamVR route")
 check(oculusLabel.contains("-vrmode Oculus -oculus"), "Expose public Oculus launch arguments")
 check(desktopLabel.contains("-vrmode None -desktop"), "Expose desktop launch arguments")
-print("PASS: Windlands-only OpenSSL CPU compatibility setting, preserved environment, SteamVR preference/options, platform/path checks and launch labels")
+print("PASS: Windlands-only OpenSSL CPU compatibility setting, preserved environment, SteamVR preference/options, safe case-insensitive executable resolution, unavailable-option filtering and launch labels")
 '''
 
 with tempfile.TemporaryDirectory(prefix='wvr-launch-selection-') as scratch:
     scratch = Path(scratch)
-    source = (SHELL + '\nenum SteamLibraryModel {\n' + selection + '\n}\n'
+    resolver = (ROOT / 'Sources/Steam/SteamInstalledExecutable.swift').read_text()
+    source = (SHELL + resolver + '\nenum SteamLibraryModel {\n' + selection + '\n}\n'
               + 'enum CompatibilityProbe {\n' + compatibility + '\n}\n'
               + 'struct SteamArgumentProbe {\n' + extra_arguments + '\n}\n'
               + 'struct LabelProbe {\n' + label

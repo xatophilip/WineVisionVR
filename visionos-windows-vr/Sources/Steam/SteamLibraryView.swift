@@ -245,11 +245,19 @@ private struct SteamGameDownloadView: View {
                                 .buttonStyle(.borderedProminent)
                                 .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
                             } else {
-                                let options = (entry.game.launches ?? []).filter {
-                                    $0.oslist.isEmpty || $0.oslist.lowercased().contains("windows")
-                                }
+                                let launches = entry.game.launches ?? []
+                                let installedGame = MadeiraDock.games(drive: MadeiraDock.drive).first { $0.id == entry.id }
+                                let options = installedGame.map {
+                                    SteamLibraryModel.installedLaunchOptions(launches, game: $0, drive: MadeiraDock.drive)
+                                } ?? []
                                 Group {
-                                    if options.count <= 1 {
+                                    if launches.isEmpty {
+                                        Label("Launch information is unavailable. Refresh the library and try again.", systemImage: "exclamationmark.circle")
+                                            .font(.footnote).foregroundStyle(.orange)
+                                    } else if options.isEmpty {
+                                        Label("No installed Windows executable found. Update / repair this game.", systemImage: "exclamationmark.circle")
+                                            .font(.footnote).foregroundStyle(.orange)
+                                    } else if options.count == 1 {
                                         selectButton("Select to launch", option: options.first?.index)
                                     } else {
                                         Menu {

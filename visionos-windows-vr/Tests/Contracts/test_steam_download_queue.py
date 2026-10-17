@@ -440,6 +440,46 @@ PROBE = r'''
               Backend.starts.count == previousAccountStarts, "Foreground must not resume a previous account's interrupted download")
         await changedAccount.signOut()
         check(Backend.running.isEmpty && Backend.maximumRunning == 1, "Lifecycle recovery preserves single-installer cleanup")
+
+        Backend.reset()
+        Backend.installed = [8]
+        let launchModel = await SteamLibraryModel.fixture("installed-launch-handoff")
+        let gameFolder = MadeiraDock.drive.appendingPathComponent("steamapps/common/game", isDirectory: true)
+        try! FileManager.default.createDirectory(at: gameFolder, withIntermediateDirectories: true)
+        let executable = gameFolder.appendingPathComponent("game.exe")
+        try! Data([1]).write(to: executable)
+        var launchGame = SteamOwnedGame(SteamAppInfo(appID: 8))
+        launchGame.launches = [SteamLaunchOption(executable: "GAME.EXE", index: 2),
+                               SteamLaunchOption(executable: "missing.exe", index: 3)]
+        let launchEntry = SteamLibraryEntry(game: launchGame)
+        var handoffs: [(Int, UInt32)] = []
+        launchModel.onPlaySelected = { game, option in handoffs.append((game.id, option)) }
+        await launchModel.play(launchEntry, launchOption: 3)
+        check(handoffs.isEmpty && launchModel.error != nil,
+              "An explicitly selected missing executable must fail without handing off to Steam")
+        launchModel.download(entry(9))
+        await eventually("failed installed selection releases launch reservation") { Backend.starts == [9] }
+        Backend.outcomes[9] = true
+        await eventually("post-selection-error download drains") { launchModel.activeDownloads.isEmpty }
+        await launchModel.play(launchEntry)
+        check(handoffs.count == 1 && handoffs[0].0 == 8 && handoffs[0].1 == 2 && launchModel.error == nil,
+              "A single installed case-insensitive executable must auto-select its actual option index")
+        launchModel.resumeAfterLaunchFailure()
+        var missingCatalog = launchGame
+        missingCatalog.launches = []
+        await launchModel.play(SteamLibraryEntry(game: missingCatalog))
+        check(handoffs.count == 1 && launchModel.error?.contains("Refresh the library") == true,
+              "Empty launch metadata must request a library refresh without inventing option zero")
+        missingCatalog.launches = nil
+        await launchModel.play(SteamLibraryEntry(game: missingCatalog))
+        check(handoffs.count == 1 && launchModel.error?.contains("Refresh the library") == true,
+              "Unavailable launch metadata must request refresh rather than repairing installed files")
+        try! FileManager.default.removeItem(at: executable)
+        await launchModel.play(launchEntry)
+        check(handoffs.count == 1 && launchModel.error?.contains("Update / repair") == true,
+              "An executable removed after catalog loading must be rechecked and request repair before handoff")
+        await launchModel.signOut()
+
         print("PASS: production Steam queue FIFO/dedup/remove, completion/failure continuation, pause/resume teardown, launch reservation, persistence/restore filtering, in-flight account fetch replacement, account isolation, current/stale callbacks and bounded background/foreground recovery")
     }
 }
@@ -457,7 +497,8 @@ def main():
     def run(scratch):
         scratch.mkdir(parents=True, exist_ok=True)
         source = scratch / 'QueueProbe.swift'
-        source.write_text(STUBS + model + PROBE)
+        resolver = (ROOT / 'Sources/Steam/SteamInstalledExecutable.swift').read_text()
+        source.write_text(STUBS + resolver + model + PROBE)
         executable = scratch / 'queue-probe'
         subprocess.run(['xcrun', '--sdk', 'macosx', 'swiftc', '-parse-as-library', '-O',
                         '-module-cache-path', str(scratch / 'cache'), str(source), '-o', str(executable)], check=True)
