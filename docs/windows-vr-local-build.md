@@ -1,5 +1,8 @@
 # Local Windows VR build handoff — 2026-10-11
 
+> Historical 11 October checkpoint. For the current tested app, signing and
+> rebuild instructions, see the [17 October handoff](windows-vr-reproducibility.md).
+
 The complete **unsigned** Debug app built successfully for arm64 visionOS 27
 with Xcode 27. This is a compiled research build, not established SteamVR game
 compatibility or measured near-native performance. No tests, app/game launches,

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Unmodified source-only archival copy of XRDev-specific 17 October 2026 composite assembly helpers; not a portable fresh-clone recipe or a binary build receipt",
+  "files": [
+    {
+      "path": "artifacts-modern-single-option/assembly-audit.py",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option/assembly-audit.py",
+      "sha256": "29341007cc64193b1b19f00ddd335525234334a56b902b326889a63785ac4eba",
+      "bytes": 8110,
+      "copyUnmodified": true
+    },
+    {
+      "path": "artifacts-modern-single-option/build-logged-modern.sh",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option/build-logged-modern.sh",
+      "sha256": "6cd90281fc80f6372b34d0f73ddf3f941de438fb5a86c0587b2cb5678b2305a8",
+      "bytes": 2117,
+      "copyUnmodified": true
+    },
+    {
+      "path": "artifacts-modern-single-option/project.yml",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option/project.yml",
+      "sha256": "2f3335810819df46b4d304ed04c6fa3e2160bc60e1495d679164ec6bd3582ce8",
+      "bytes": 5420,
+      "copyUnmodified": true
+    },
+    {
+      "path": "artifacts-modern-single-option-game-compat/assemble.py",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option-game-compat/assemble.py",
+      "sha256": "397c41ab44673bfb3ad281f818f873d8eb6783b7fa39d580e817139847f9e7b7",
+      "bytes": 8736,
+      "copyUnmodified": true
+    },
+    {
+      "path": "game-dll-compat/finalize.py",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/game-dll-compat/finalize.py",
+      "sha256": "c1270d51b3ae2286a24f5d7e80705a804d4d0aa2b9af31d899617c32a10840a7",
+      "bytes": 5179,
+      "copyUnmodified": true
+    },
+    {
+      "path": "game-dll-compat/validate-ordinals.py",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/game-dll-compat/validate-ordinals.py",
+      "sha256": "8d72f1d59c54165e1e9724f557d36cf93ea040f1e5ead72d057a319ac488582d",
+      "bytes": 3038,
+      "copyUnmodified": true
+    },
+    {
+      "path": "game-dll-compat/finalize-openvr.py",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/game-dll-compat/finalize-openvr.py",
+      "sha256": "3fd0fa61912106434dbc1a9ea5dbd3245b30ccd4db1719ea92f44c39a19d985c",
+      "bytes": 4511,
+      "copyUnmodified": true
+    },
+    {
+      "path": "env.sh",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/env.sh",
+      "sha256": "6eb53720303ff9ba2a08a9074cf9475753982cb8e44aee499e1cf02bbb253bee",
+      "bytes": 1405,
+      "copyUnmodified": true
+    },
+    {
+      "path": "verify-local-app.py",
+      "originalAbsolutePath": "/Volumes/XRDev/build/WineVisionVR/verify-local-app.py",
+      "sha256": "65503955be31543d9b112b66716569348c10b5b65d7c72b13aaf313ffc9b30e6",
+      "bytes": 2283,
+      "copyUnmodified": true
+    }
+  ]
+}

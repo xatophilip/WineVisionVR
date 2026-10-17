@@ -1,0 +1,147 @@
+{
+  "name": "LoggedModernWineVision",
+  "options": {
+    "minimumXcodeGenVersion": "2.38.0",
+    "deploymentTarget": {
+      "visionOS": "27.0"
+    }
+  },
+  "packages": {
+    "WindowsVRCore": {
+      "path": "/Volumes/XRDev/src/WineVisionVR/windows-vr"
+    },
+    "WindowsVRMetal": {
+      "path": "/Volumes/XRDev/src/WineVisionVR/windows-vr-metal"
+    }
+  },
+  "targets": {
+    "VisionOSWindowsVR": {
+      "type": "application",
+      "platform": "visionOS",
+      "dependencies": [
+        {
+          "package": "WindowsVRCore"
+        },
+        {
+          "package": "WindowsVRMetal",
+          "embed": true
+        },
+        {
+          "framework": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/Frameworks/WindowsVRNativeBridge.framework",
+          "embed": true,
+          "codeSign": true
+        },
+        {
+          "framework": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/Frameworks/WindowsRuntimePlugin.framework",
+          "embed": true,
+          "codeSign": true
+        }
+      ],
+      "settings": {
+        "base": {
+          "PRODUCT_BUNDLE_IDENTIFIER": "com.philipanderson.WineVisionVR",
+          "PRODUCT_NAME": "WineVision VR",
+          "TARGETED_DEVICE_FAMILY": "7",
+          "XROS_DEPLOYMENT_TARGET": "27.0",
+          "SWIFT_VERSION": "6.0",
+          "OTHER_LDFLAGS": [
+            "$(inherited)",
+            "-lz",
+            "-llzma"
+          ],
+          "GENERATE_INFOPLIST_FILE": "YES",
+          "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES",
+          "CODE_SIGN_STYLE": "Automatic",
+          "CODE_SIGN_IDENTITY": "Apple Development",
+          "CODE_SIGN_ENTITLEMENTS": "/Volumes/XRDev/src/WineVisionVR/visionos-windows-vr/.local.VisionOSWindowsVR.entitlements",
+          "CODE_SIGNING_REQUIRED": "YES",
+          "SWIFT_OBJC_BRIDGING_HEADER": "/Volumes/XRDev/src/WineVisionVR/visionos-windows-vr/Sources/WindowsVR-Bridging-Header.h",
+          "INFOPLIST_KEY_NSWorldSensingUsageDescription": "Head tracking places the game's stereo views in your surroundings.",
+          "INFOPLIST_KEY_NSAccessoryTrackingUsageDescription": "Tracked controllers provide poses and controls to your VR game.",
+          "CLANG_MODULE_CACHE_PATH": "/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option/module-cache",
+          "ENABLE_USER_SCRIPT_SANDBOXING": "NO"
+        }
+      },
+      "info": {
+        "path": "Generated-Info.plist",
+        "properties": {
+          "WVRDiagnostics": true,
+          "WVRFrameCapture": false,
+          "LSApplicationQueriesSchemes": [
+            "stikdebug",
+            "stikjit"
+          ],
+          "UIFileSharingEnabled": true,
+          "LSSupportsOpeningDocumentsInPlace": true,
+          "GCSupportsControllerUserInteraction": true,
+          "GCSupportedGameControllers": [
+            {
+              "ProfileName": "SpatialGamepad"
+            }
+          ]
+        }
+      },
+      "sources": [
+        {
+          "path": "/Volumes/XRDev/src/WineVisionVR/visionos-windows-vr/Sources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/Runtime",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/WindowsVR",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/nls",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/fonts",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/aarch64-windows",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/arm64ec-windows",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/DesktopDemo",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/VRSmoke",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/steam-native",
+          "type": "folder",
+          "buildPhase": "resources"
+        },
+        {
+          "path": "/Volumes/XRDev/build/WineVisionVR/black-screen-oct16/working-windlands-queue.app/madeira-jit.js",
+          "buildPhase": "resources"
+        }
+      ],
+      "postBuildScripts": [
+        {
+          "name": "Verify compatible Metal ABI and restore exact archival native/runtime assembly",
+          "script": "python3 '/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option/assembly-audit.py' finalize \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"",
+          "basedOnDependencyAnalysis": false
+        }
+      ]
+    }
+  }
+}

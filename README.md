@@ -124,8 +124,9 @@ Headset-confirmed unless marked otherwise. The full engineering record is in `do
   of what the compositor received and drew), a 60 s startup-stall watchdog with all-thread dumps, and an OpenXR
   call trace. They are on while `WVRDiagnostics` is true in the app's Info.plist and should be turned off for a
   release.
-- **Not reproducible from source:** the prebuilt runtime plugin carries two binary patches (a 640 MB JIT pool and
-  a Mach-port registration stub). They have to be ported into source patches before a clean rebuild.
+- **Rebuild status:** the 640 MiB JIT pool modification is now in source patch `0006`. The tested package still
+  preserves known-working native frameworks; full equivalence of a fresh source rebuild (including the historical
+  Mach-port stub behavior) is unverified. See the [current rebuild/recovery handoff](docs/windows-vr-reproducibility.md).
 
 The full engineering record is in `docs/windows-vr-*.md` (status, graphics, input, freeze, performance, packaging,
 Steam, simulator). The patch files are numbered in `windows-vr-openxr/patches/` and
@@ -133,8 +134,10 @@ Steam, simulator). The patch files are numbered in `windows-vr-openxr/patches/` 
 
 ## Set it up for yourself
 
-These are the steps that worked on the author's Mac. Step 4 is long and was completed only once; expect to debug
-it.
+For this fork, start with the [current rebuild and run handoff](docs/windows-vr-reproducibility.md).
+It identifies the working modern profile, external inputs, local signing setup and the retained native-runtime
+limitation. The upstream steps below describe the original baseline; their default legacy profile is not the
+confirmed working modern package. Step 4 is long; expect to debug it.
 
 **What you need**
 
@@ -150,7 +153,7 @@ it.
 
 1. **Clone the branch and read the notices.**
    ```bash
-   git clone https://github.com/HudsonMCox/WineVisionVR.git && cd WineVisionVR
+   git clone --branch codex/local-build-and-benchmarks https://github.com/xatophilip/WineVisionVR.git && cd WineVisionVR
    ```
 2. **Create a clean Wine prefix template once.** Upstream provides none. Build the pinned Wine host from the
    Madeira source, set `AVPPLAY_PREFIX_WINE_BIN` and `AVPPLAY_PREFIX_WINEBOOT_BIN` to its executables, then run

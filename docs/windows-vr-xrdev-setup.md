@@ -1,5 +1,11 @@
 # XRDev Mac setup and current status
 
+> **Current handoff (17 October 2026):** see [rebuild and run](windows-vr-reproducibility.md).
+> Windlands and Job Simulator are confirmed working. The paths/builds below are a
+> historical investigation record; the retained tested composite package and
+> source-only assembly scripts are identified in the current handoff. Changes
+> have since been committed and pushed to the `xatophilip` fork.
+
 Recorded October 16, 2026. The Windlands lifecycle candidate is signed, verified
 and installed as `064F66F7-17BE-4C93-A404-E58032067C17`. After an ordinary retry,
 the user confirmed **“Level starts and controls work”** and **“seems to be

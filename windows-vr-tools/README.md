@@ -1,5 +1,12 @@
 # Pinned source acquisition and visionOS preparation
 
+For the 17 October working-game checkpoint, start with the
+[current rebuild and recovery handoff](../docs/windows-vr-reproducibility.md).
+It selects the modern graphics profile explicitly, explains external inputs and
+signing, and distinguishes the tested preserved-native assembly from an
+unvalidated full fresh rebuild. `verify_development_app.py` checks development
+signing/JIT prerequisites against your own bundle and team IDs.
+
 ## Offline regression checks
 
 Run `python3 -m unittest discover -s windows-vr-tools/tests -v` for archive limits,

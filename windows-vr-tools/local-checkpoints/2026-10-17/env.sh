@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Local WineVisionVR development environment. Source before component builds.
+export DEVELOPER_DIR=/Volumes/XRDev/Applications/Xcode-27-beta-3.app/Contents/Developer
+export PATH="/Volumes/XRDev/tools/homebrew/opt/bison/bin:/Volumes/XRDev/tools/homebrew/bin:$PATH"
+export TMPDIR=/Volumes/XRDev/build/WineVisionVR/tmp
+export CLANG_MODULE_CACHE_PATH=/Volumes/XRDev/build/WineVisionVR/module-cache
+export AVPPLAY_ALLOW_RUNTIME_BUILD=1
+export AVPPLAY_BUILD_WINE_PE=1
+export AVPPLAY_ENABLE_D3D12=1
+export AVPPLAY_RUNTIME_SOURCE=/Volumes/XRDev/build/WineVisionVR/runtime-final2
+export AVPPLAY_D3D12_PROFILE_SOURCE=/Volumes/XRDev/build/WineVisionVR/runtime-final2
+export AVPPLAY_SOURCE_CACHE_ROOT=/Volumes/XRDev/src/WineVisionVR/third-party
+export AVPPLAY_BUILD_ROOT=/Volumes/XRDev/build/WineVisionVR/artifacts
+export AVPPLAY_D3D12_BUILD_ROOT=/Volumes/XRDev/build/WineVisionVR/artifacts/dxmt-bounds-binding-refresh
+export AVPPLAY_D3D12_STAGE_ROOT=/Volumes/XRDev/build/WineVisionVR/artifacts/d3d12-stage-bounds-binding
+export AVPPLAY_LLVM_TOOLCHAINS_ROOT=/Volumes/XRDev/build/WineVisionVR/llvm-toolchains
+export AVPPLAY_LLVM_MINGW_ROOT=/Volumes/XRDev/toolchains/llvm-mingw-20260421-ucrt-macos-universal
+export AVPPLAY_FREETYPE_SOURCE=/Volumes/XRDev/src/WineVisionVR/third-party/freetype
+export AVPPLAY_DEVELOPMENT_TEAM=ZUFPF3R7HP
+export AVPPLAY_BUILD_JOBS=4
+export CMAKE_BUILD_PARALLEL_LEVEL=4
