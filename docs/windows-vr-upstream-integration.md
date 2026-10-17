@@ -150,10 +150,13 @@ launcher, Steam and game children. No such native change is represented by the
 current workaround.
 
 
-## Space Pirate Trainer confirmed
+## Space Pirate Trainer — provisional after clarification
 
 On 17 October the user confirmed **Space Pirate Trainer (Steam 418650) works**
 on the installed source-built update, app UUID
 `772767BC-4724-3F1A-96DE-FDE41E4B334B` (source `84663b7`). The app defaults
 `FEX_ENABLECODECACHINGWIP=0`. This supersedes earlier Space Pirate Trainer failures
 for this build; no FPS or long-session stability measurement was supplied.
+The user then clarified that it is slow to load and only almost works. This later
+qualification is authoritative: Space Pirate Trainer is provisional, not fully
+validated gameplay.
