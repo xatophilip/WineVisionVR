@@ -241,15 +241,22 @@ private struct SteamGameDownloadView: View {
                                 .buttonStyle(.borderedProminent)
                                 .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
                             } else {
-                                Menu {
-                                    let options = entry.game.launches ?? []
-                                    if options.isEmpty { selectButton("Select to launch", option: 0) }
-                                    ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                                        selectButton(optionLabel(option), option: option.index ?? 0)
+                                let options = (entry.game.launches ?? []).filter {
+                                    $0.oslist.isEmpty || $0.oslist.lowercased().contains("windows")
+                                }
+                                Group {
+                                    if options.count <= 1 {
+                                        selectButton("Select to launch", option: options.first?.index)
+                                    } else {
+                                        Menu {
+                                            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                                                selectButton(optionLabel(option), option: option.index ?? 0)
+                                            }
+                                        } label: { Label("Select to launch", systemImage: "play.fill") }
                                     }
-                                } label: { Label("Select to launch", systemImage: "play.fill") }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
                             }
                         } else {
                             Button(model.runtimeBusy || !model.activeDownloads.isEmpty ? "Add to download queue" : (failure != nil ? "Retry download" : (isPartial || model.pausedDownloads.contains(entry.id) ? "Resume download" : "Download")), systemImage: "arrow.down.circle.fill") {
@@ -291,8 +298,8 @@ private struct SteamGameDownloadView: View {
         }.frame(width: 620, height: 620)
     }
 
-    private func selectButton(_ title: String, option: UInt32) -> some View {
-        Button(title) { Task { await model.play(entry, launchOption: option); if model.error == nil { closeLibrary() } } }
+    private func selectButton(_ title: String, option: UInt32?) -> some View {
+        Button(title, systemImage: "play.fill") { Task { await model.play(entry, launchOption: option); if model.error == nil { closeLibrary() } } }
     }
 
     private func optionLabel(_ option: SteamLaunchOption) -> String {
