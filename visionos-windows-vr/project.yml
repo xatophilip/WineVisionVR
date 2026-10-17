@@ -87,19 +87,6 @@ targets:
           copyFiles:
             destination: resources
             subpath: arm64ec-windows
-      # Optional experimental x86 bootstrap; the complete farm stays in Runtime.
-      - path: Resources/Runtime/i386-windows/ntdll.dll
-        optional: true
-        buildPhase:
-          copyFiles:
-            destination: resources
-            subpath: i386-windows
-      - path: Resources/Runtime/i386-windows/apisetschema.dll
-        optional: true
-        buildPhase:
-          copyFiles:
-            destination: resources
-            subpath: i386-windows
       - path: Resources/WindowsVR
         type: folder
         buildPhase: resources
