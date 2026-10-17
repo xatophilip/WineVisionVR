@@ -543,3 +543,26 @@ hourglass and a strangely aligned object, so it remains a partial result rather
 than a confirmed playable title. Both eye crops were correct in the captured
 double-wide submission; loading pauses reused the previous frame. The user
 confirmed leaving the immersive view, explaining that recorded closure.
+
+### Fantastic Contraption — known failure, 17 October 2026
+
+Fantastic Contraption remains **not confirmed playable**. The user subsequently
+reported a crash. The headset saved `WineVision VR-2026-10-17-140406.ips` for the
+same tested executable UUID. This records a FrontBoard scene-update watchdog
+termination (`SIGKILL`, `0x8BADF00D`): the app exceeded a 10-second scene-update
+allowance. It does not identify a failing game instruction or a GPU fault.
+
+A later attempt (game log timestamp 14:10:27) showed a persistent guest stall:
+VR submissions stopped at 1,100 while the compositor continued presenting and
+all 3,771 guest GPU submissions completed with zero failures. Both controllers
+were connected and tracked during this stall. Available native samples put the
+game main thread and graphics worker in waits; they do not identify the wait
+handle or prove a Mono GC cause. Correct double-wide eye bounds do not establish
+that the game itself is rendering correctly. The next focused diagnostic is a
+bounded `+sync,+seh` trace of the game's Windows waits. No speculative stereo or
+native runtime patch was applied.
+
+Local evidence: `black-screen-oct17/fantastic-140406.ips` and
+`fantastic-crash-report-{launcher,runtime,player}.log`, with per-attempt journals
+in `fantastic-crash-report-sessions/`. Job Simulator's user-confirmed working
+result above remains separate from this failure.
