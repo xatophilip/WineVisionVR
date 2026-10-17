@@ -1,5 +1,7 @@
 """Offline packaging regressions. Fixtures contain no Wine or game binaries."""
+import ast
 import gzip
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -382,6 +384,57 @@ class SourcePinTests(unittest.TestCase):
         self.git(self.source, "submodule", "deinit", "--force", "dependency")
         with self.assertRaisesRegex(SystemExit, "uninitialized"):
             verify_source_checkout(self.source, revision)
+
+
+class D3D12IntegrationInputTests(unittest.TestCase):
+    def test_prepared_profile_input_set_matches_staging_contract(self):
+        # Evaluate only the production input-list assignments, without running
+        # source preparation, copying binaries or constructing build receipts.
+        root = Path(__file__).resolve().parents[2]
+        tools = root / "windows-vr-tools"
+        def embedded_python(name):
+            text = (tools / name).read_text()
+            return ast.parse(text.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+        prepare = embedded_python("prepare_d3d12_profile.sh")
+        names = {"patches", "wine_patch", "headers", "inputs"}
+        assignments = [node for node in prepare.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id in names
+                               for target in node.targets)]
+        namespace = {}
+        exec(compile(ast.Module(body=assignments, type_ignores=[]),
+                     "prepare_d3d12_profile input declarations", "exec"), namespace)
+        stage_tree = embedded_python("stage_d3d12_profile.sh")
+        required = next(node.value for node in stage_tree.body
+                        if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "required"
+                                for target in node.targets))
+        self.assertEqual(set(namespace["inputs"]), ast.literal_eval(required),
+                         "Prepared source provenance and staging input contracts drifted")
+        for name in namespace["inputs"]:
+            with self.subTest(input=name):
+                self.assertTrue((root / name).is_file(), "Recorded build input must exist")
+
+        # Run the stager's real input checks on preparation-derived hashes.
+        # This isolates its provenance gate without fabricating build receipts.
+        helpers = [node for node in stage_tree.body if isinstance(node, ast.FunctionDef)
+                   and node.name in {"fail", "regular", "sha"}]
+        start = next(i for i, node in enumerate(stage_tree.body)
+                     if isinstance(node, ast.Assign)
+                     and any(isinstance(target, ast.Name) and target.id == "inputs"
+                             for target in node.targets))
+        end = next(i for i, node in enumerate(stage_tree.body)
+                   if isinstance(node, ast.FunctionDef) and node.name == "tree_sha")
+        check = compile(ast.Module(body=helpers + stage_tree.body[start:end], type_ignores=[]),
+                        "stage_d3d12_profile provenance gate", "exec")
+        hashes = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                  for name in namespace["inputs"]}
+        fixture = {"source": {"integrationInputsSha256": hashes},
+                   "root": root, "hashlib": hashlib}
+        exec(check, fixture)
+        stale = "windows-vr-native/include/WindowsVRReconstruction.h"
+        hashes[stale] = "0" * 64
+        with self.assertRaisesRegex(SystemExit, "source input changed after preparation: " + stale):
+            exec(check, fixture)
 
 
 class ArchitectureTests(unittest.TestCase):

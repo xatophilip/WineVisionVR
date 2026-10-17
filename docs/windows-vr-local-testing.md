@@ -8,9 +8,9 @@ Sense controllers.
 
 | Game | Latest confirmed result |
 |---|---|
-| Windlands (Steam 428370) | Working: a level starts and controller input works. |
-| Job Simulator (Steam 448280) | Working: confirmed by the user during headset testing and reconfirmed afterward. |
-| Fantastic Contraption (Steam 386690) | Unresolved: freezes/crashes; not confirmed playable. |
+| Windlands (Steam 428370) | Working: a level starts and controller input works; user reports acceptable speed in the prior working build. |
+| Job Simulator (Steam 448280) | Working: user-confirmed gameplay and acceptable speed in the prior working build. |
+| Fantastic Contraption (Steam 386690) | Unresolved: user reports very slow rendering when visible; prior attempts also froze/crashed. Not confirmed reliably playable. |
 | Google Earth VR (Steam 348250) | Unresolved: unsupported OpenGL rendering path. |
 | Audioshield | Unresolved: experimental 32-bit runtime and mixed-architecture launch limitations. |
 
@@ -18,6 +18,22 @@ Working means user-confirmed gameplay on the tested setup; it does not establish
 long-session stability or a sustained FPS result. The earlier failures below
 are a chronological investigation record and do not supersede these latest
 Windlands and Job Simulator confirmations.
+
+## User-reported performance baseline before the upstream update
+
+On 17 October the user reported that **Windlands and Job Simulator ran at
+acceptable speed in the previous build**, whereas **Fantastic Contraption was
+very slow**. This is a qualitative comparison, not measured FPS or a sustained
+benchmark. It does not replace the recorded Fantastic Contraption freezes and
+watchdog termination with a success result.
+
+Use Windlands and Job Simulator as working compatibility controls when testing
+the upstream integration. Treat Fantastic Contraption as a distinct performance
+and stability case: record real guest FPS separately from display reprojection,
+cold versus warm cache, the same scene/render scale, GPU time/failures and guest
+stalls. Compare Standard rendering first; test foveation or experimental frame
+extrapolation separately. No benefit from the new CPU/cache/rendering changes is
+established until the updated headset build is measured.
 
 ## Running local checks
 
