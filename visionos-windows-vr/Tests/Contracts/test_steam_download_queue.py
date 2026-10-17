@@ -46,7 +46,10 @@ struct DockGame: Sendable {
     var library = "steamapps"
     var installDir = "game"
 }
-enum SteamError: Error { case depotNotFound(UInt32), fakeFailure }
+enum SteamError: Error {
+    case depotNotFound(UInt32), fakeFailure, disconnected, connectionTimeout, noServersAvailable
+    case connectionFailed(String)
+}
 @MainActor enum SteamSignIn {
     static var isSignedIn = false
     static var accountName: String?
@@ -62,6 +65,7 @@ enum SteamError: Error { case depotNotFound(UInt32), fakeFailure }
     static var running: Set<Int> = []
     static var maximumRunning = 0
     static var outcomes: [Int: Bool] = [:]
+    static var failures: [Int: Error] = [:]
     static var callbacks: [Int: (SteamDownloadProgress) -> Void] = [:]
     static var fetchHeld = false
     static var cancellationHeld: Set<Int> = []
@@ -69,7 +73,7 @@ enum SteamError: Error { case depotNotFound(UInt32), fakeFailure }
     static var events: [String] = []
     static func reset() {
         owned = Array(1...20); installed = []; partial = []
-        starts = []; running = []; maximumRunning = 0; outcomes = [:]
+        starts = []; running = []; maximumRunning = 0; outcomes = [:]; failures = [:]
         callbacks = [:]; fetchHeld = false; cancellationHeld = []
         cancellationSeen = []; events = []
     }
@@ -107,7 +111,7 @@ enum SteamError: Error { case depotNotFound(UInt32), fakeFailure }
         Backend.partial.insert(app.appID)
         defer { Backend.running.remove(id) }
         do {
-            while Backend.outcomes[id] == nil { try await Task.sleep(nanoseconds: 1_000_000) }
+            while Backend.outcomes[id] == nil && Backend.failures[id] == nil { try await Task.sleep(nanoseconds: 1_000_000) }
             try Task.checkCancellation()
         } catch {
             Backend.cancellationSeen.insert(id)
@@ -120,6 +124,7 @@ enum SteamError: Error { case depotNotFound(UInt32), fakeFailure }
             }
             throw error
         }
+        if let failure = Backend.failures.removeValue(forKey: id) { throw failure }
         guard Backend.outcomes.removeValue(forKey: id)! else { throw SteamError.fakeFailure }
         Backend.installed.insert(id); Backend.partial.remove(app.appID)
         return steamApps
@@ -322,7 +327,120 @@ PROBE = r'''
         check(filtered.pausedDownloads == [5], "Restore filters unowned paused IDs")
         await filtered.signOut()
         check(Backend.running.isEmpty && Backend.maximumRunning == 1, "All test tasks are stopped without install overlap")
-        print("PASS: production Steam queue FIFO/dedup/remove, completion/failure continuation, pause/resume teardown, launch reservation, persistence/restore filtering, in-flight account fetch replacement, account isolation and current/stale callbacks")
+
+        // Taking the headset off must leave an active transfer alone. If the
+        // system suspends networking, preserve its journal and retry only when
+        // the application becomes active again, ahead of later queued games.
+        Backend.reset()
+        let background = await SteamLibraryModel.fixture("background-retry")
+        background.download(entry(17)); background.download(entry(18))
+        await eventually("background transfer starts") { Backend.starts == [17] }
+        background.applicationActivityChanged(false)
+        check(Backend.running == [17], "Background transition must not cancel a healthy active download")
+        Backend.failures[17] = URLError(.networkConnectionLost)
+        await eventually("suspended transfer preserved") { background.activeDownloads.isEmpty }
+        check(background.queuedDownloads == [17, 18], "Suspended active install returns to the front of its queue")
+        check(background.downloadErrors[17] == nil && Backend.partial.contains(17), "Transient suspension keeps resumable progress without a permanent error")
+        background.applicationActivityChanged(false)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(Backend.starts == [17], "Inactive recovery must not repeatedly reconnect or retry")
+        background.applicationActivityChanged(true)
+        await eventually("foreground resumes interrupted install") { Backend.starts == [17, 17] }
+        background.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        check(Backend.starts == [17, 17] && Backend.maximumRunning == 1, "Repeated active notifications must not duplicate installers")
+        Backend.outcomes[17] = true
+        await eventually("background recovery preserves waiting game") { Backend.starts == [17, 17, 18] }
+        Backend.outcomes[18] = true
+        await eventually("background recovered queue drains") { background.activeDownloads.isEmpty }
+
+        background.download(entry(19))
+        await eventually("inactive pause target starts") { Backend.starts.last == 19 }
+        background.applicationActivityChanged(false)
+        background.pause(19)
+        await eventually("explicit inactive pause completes") { background.activeDownloads.isEmpty }
+        let pausedStarts = Backend.starts.count
+        background.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(background.pausedDownloads.contains(19) && Backend.starts.count == pausedStarts,
+              "Foreground recovery must never override an explicit pause")
+
+        background.download(entry(20))
+        await eventually("permanent background failure target starts") { Backend.starts.last == 20 }
+        background.applicationActivityChanged(false)
+        Backend.failures[20] = SteamError.fakeFailure
+        await eventually("permanent background failure surfaces") { background.downloadErrors[20] != nil && background.activeDownloads.isEmpty }
+        let permanentStarts = Backend.starts.count
+        background.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(Backend.starts.count == permanentStarts && background.downloadErrors[20] != nil,
+              "Permanent download errors must remain visible and must not auto-retry")
+        await background.signOut()
+
+        Backend.reset()
+        let retryBudget = await SteamLibraryModel.fixture("background-retry-budget")
+        retryBudget.download(entry(3))
+        await eventually("bounded recovery target starts") { Backend.starts == [3] }
+        retryBudget.applicationActivityChanged(false)
+        Backend.failures[3] = URLError(.timedOut)
+        await eventually("bounded recovery waits for foreground") { retryBudget.activeDownloads.isEmpty && retryBudget.queuedDownloads == [3] }
+        retryBudget.applicationActivityChanged(true)
+        await eventually("bounded recovery gets one retry") { Backend.starts == [3, 3] }
+        Backend.failures[3] = URLError(.networkConnectionLost)
+        await eventually("second failure remains visible") { retryBudget.activeDownloads.isEmpty && retryBudget.downloadErrors[3] != nil }
+        retryBudget.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(Backend.starts == [3, 3], "One background interruption must not create an endless retry loop")
+        await retryBudget.signOut()
+
+        Backend.reset()
+        let reserved = await SteamLibraryModel.fixture("background-launch-reservation")
+        reserved.download(entry(4)); reserved.download(entry(5))
+        await eventually("reserved recovery target starts") { Backend.starts == [4] }
+        reserved.applicationActivityChanged(false)
+        Backend.failures[4] = SteamError.connectionTimeout
+        await eventually("reserved recovery waits for foreground") { reserved.activeDownloads.isEmpty && reserved.queuedDownloads == [4, 5] }
+        await reserved.prepareForLaunch()
+        reserved.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(Backend.starts == [4] && reserved.queuedDownloads == [4, 5],
+              "Foreground recovery must not bypass a game launch's Steam reservation")
+        reserved.resumeAfterLaunchFailure()
+        await eventually("released reservation resumes interrupted first") { Backend.starts == [4, 4] }
+        await reserved.signOut()
+
+        Backend.reset()
+        let removed = await SteamLibraryModel.fixture("background-remove-waiting")
+        removed.download(entry(6)); removed.download(entry(7))
+        await eventually("removable suspended target starts") { Backend.starts == [6] }
+        removed.applicationActivityChanged(false)
+        Backend.failures[6] = SteamError.noServersAvailable
+        await eventually("removable suspended target waits") { removed.activeDownloads.isEmpty && removed.queuedDownloads == [6, 7] }
+        removed.removeQueued(6)
+        await eventually("removing suspended head unblocks later queued game") { Backend.starts == [6, 7] }
+        Backend.outcomes[7] = true
+        await eventually("unblocked queue drains") { removed.activeDownloads.isEmpty }
+        removed.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(Backend.starts == [6, 7], "Removed suspended game must not return on foreground")
+        await removed.signOut()
+
+        Backend.reset()
+        let changedAccount = await SteamLibraryModel.fixture("background-old-account")
+        changedAccount.download(entry(1)); changedAccount.download(entry(2))
+        await eventually("account-isolation background target starts") { Backend.starts == [1] }
+        changedAccount.applicationActivityChanged(false)
+        Backend.failures[1] = SteamError.disconnected
+        await eventually("old account suspended queue preserved") { changedAccount.activeDownloads.isEmpty && changedAccount.queuedDownloads == [1, 2] }
+        await changedAccount.fixtureAccountChange("background-new-account")
+        let previousAccountStarts = Backend.starts.count
+        changedAccount.applicationActivityChanged(true)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        check(changedAccount.activeDownloads.isEmpty && changedAccount.queuedDownloads.isEmpty &&
+              Backend.starts.count == previousAccountStarts, "Foreground must not resume a previous account's interrupted download")
+        await changedAccount.signOut()
+        check(Backend.running.isEmpty && Backend.maximumRunning == 1, "Lifecycle recovery preserves single-installer cleanup")
+        print("PASS: production Steam queue FIFO/dedup/remove, completion/failure continuation, pause/resume teardown, launch reservation, persistence/restore filtering, in-flight account fetch replacement, account isolation, current/stale callbacks and bounded background/foreground recovery")
     }
 }
 '''

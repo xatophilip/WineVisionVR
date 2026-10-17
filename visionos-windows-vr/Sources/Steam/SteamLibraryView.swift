@@ -53,6 +53,10 @@ struct SteamLibraryView: View {
                         }.pickerStyle(.segmented)
                         if model.isLoadingLibrary { ProgressView().controlSize(.small) }
                     }.padding(.horizontal, 24)
+                    if filter == .downloads && (!model.activeDownloads.isEmpty || !model.queuedDownloads.isEmpty) {
+                        Text("Keep Vision Pro powered and on Wi-Fi. If the system pauses downloads while you are away, they resume when you return.")
+                            .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24)
+                    }
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 16)], spacing: 16) {
                             ForEach(visibleGames) { entry in

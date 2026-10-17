@@ -5,6 +5,9 @@
 
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SteamLibraryEntry: Identifiable, Sendable {
     let game: SteamOwnedGame
@@ -60,6 +63,68 @@ final class SteamLibraryModel: ObservableObject {
     private var reloadLibraryWhenIdle = false
     private var queueAccount: String?
     private var repairDownloads: Set<Int> = []
+    private var applicationIsActive = true
+    private var backgroundRecoveryCandidates: Set<Int> = []
+    private var waitingForForeground: Set<Int> = []
+    #if canImport(UIKit)
+    private var downloadBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    #endif
+
+    /// Background URLSession owns the network transfers. This short execution
+    /// allowance lets chunk verification/journaling finish when the scene leaves
+    /// the foreground; it does not promise unlimited background CPU time.
+    private func updateDownloadBackgroundExecution() {
+        #if canImport(UIKit)
+        if activeDownloads.isEmpty {
+            endDownloadBackgroundExecution()
+        } else if downloadBackgroundTask == .invalid {
+            downloadBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Steam download checkpoint") { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.persistDownloadQueue()
+                    // Do not cancel system-owned transfers at expiration. Their
+                    // encrypted results remain available for the next wake.
+                    self.endDownloadBackgroundExecution()
+                }
+            }
+        }
+        #endif
+    }
+
+    private func endDownloadBackgroundExecution() {
+        #if canImport(UIKit)
+        guard downloadBackgroundTask != .invalid else { return }
+        let identifier = downloadBackgroundTask
+        downloadBackgroundTask = .invalid
+        UIApplication.shared.endBackgroundTask(identifier)
+        #endif
+    }
+
+    func applicationActivityChanged(_ isActive: Bool) {
+        guard isActive != applicationIsActive else { return }
+        applicationIsActive = isActive
+        if !isActive {
+            backgroundRecoveryCandidates.formUnion(activeDownloads)
+            persistDownloadQueue()
+        } else {
+            // A single suspension-related retry keeps its position in the FIFO.
+            // Normal errors and explicitly paused games are never auto-resumed.
+            waitingForForeground.removeAll()
+            startNextDownload()
+        }
+    }
+
+    private static func isSuspensionConnectionError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return [.networkConnectionLost, .notConnectedToInternet, .timedOut,
+                    .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(urlError.code)
+        }
+        guard let steamError = error as? SteamError else { return false }
+        switch steamError {
+        case .disconnected, .connectionTimeout, .connectionFailed, .noServersAvailable: return true
+        default: return false
+        }
+    }
 
     private struct SavedDownloadQueue: Codable {
         let pending: [Int]
@@ -155,6 +220,9 @@ final class SteamLibraryModel: ObservableObject {
         pausedDownloads = []
         queuedDownloads = []
         repairDownloads = []
+        backgroundRecoveryCandidates = []
+        waitingForForeground = []
+        endDownloadBackgroundExecution()
         downloadErrors = [:]
         if isPreparingValveClient && !runtimeBusy { sessionReservedForLaunch = false }
         isPreparingValveClient = false
@@ -216,15 +284,21 @@ final class SteamLibraryModel: ObservableObject {
     func removeQueued(_ id: Int) {
         queuedDownloads.removeAll { $0 == id }
         repairDownloads.remove(id)
+        waitingForForeground.remove(id)
+        backgroundRecoveryCandidates.remove(id)
         persistDownloadQueue()
+        startNextDownload()
     }
 
     private func startNextDownload() {
         guard signedIn, !runtimeBusy, !sessionReservedForLaunch,
               !isPreparingValveClient, !isLoadingLibrary, suspendingDownloads == 0,
-              downloadTasks.isEmpty, let appID = queuedDownloads.first else { return }
+              downloadTasks.isEmpty, let appID = queuedDownloads.first,
+              !waitingForForeground.contains(appID) else { return }
         queuedDownloads.removeFirst()
         activeDownloads.insert(appID)
+        if !applicationIsActive { backgroundRecoveryCandidates.insert(appID) }
+        updateDownloadBackgroundExecution()
         persistDownloadQueue()
         let generation = accountGeneration
         let token = UUID()
@@ -257,14 +331,24 @@ final class SteamLibraryModel: ObservableObject {
                 error = nil
                 queuedDownloads.removeAll { $0 == appID }
                 repairDownloads.remove(appID)
+                backgroundRecoveryCandidates.remove(appID)
+                waitingForForeground.remove(appID)
             } catch is CancellationError {
                 // Explicit pauses stay paused; launch suspension already requeued its active ID.
             } catch {
                 guard generation == accountGeneration else { return }
                 if !Task.isCancelled {
-                    let message = SteamSignIn.message(error)
-                    downloadErrors[appID] = message
-                    self.error = message
+                    if backgroundRecoveryCandidates.remove(appID) != nil,
+                       Self.isSuspensionConnectionError(error), !pausedDownloads.contains(appID) {
+                        queuedDownloads.removeAll { $0 == appID }
+                        queuedDownloads.insert(appID, at: 0)
+                        if !applicationIsActive { waitingForForeground.insert(appID) }
+                        downloadErrors.removeValue(forKey: appID)
+                    } else {
+                        let message = SteamSignIn.message(error)
+                        downloadErrors[appID] = message
+                        self.error = message
+                    }
                 }
             }
             guard generation == accountGeneration, downloadTokens[appID] == token else { return }
@@ -276,6 +360,7 @@ final class SteamLibraryModel: ObservableObject {
             downloadTokens.removeValue(forKey: appID)
             persistDownloadQueue()
             startNextDownload()
+            updateDownloadBackgroundExecution()
         }
         downloadTasks[appID] = task
     }
@@ -283,6 +368,8 @@ final class SteamLibraryModel: ObservableObject {
     func pause(_ id: Int) {
         guard let task = downloadTasks[id] else { return }
         pausedDownloads.insert(id)
+        waitingForForeground.remove(id)
+        backgroundRecoveryCandidates.remove(id)
         queuedDownloads.removeAll { $0 == id }
         persistDownloadQueue()
         task.cancel()
@@ -449,6 +536,7 @@ final class SteamLibraryModel: ObservableObject {
         downloadTasks.removeAll()
         downloadTokens.removeAll()
         activeDownloads.removeAll()
+        endDownloadBackgroundExecution()
         await session.suspend()
     }
 }
