@@ -1,0 +1,92 @@
+{
+  "appPathOnXRDev": "/Volumes/XRDev/build/WineVisionVR/artifacts-modern-single-option-game-compat/WineVision VR.app",
+  "confirmedWorkingGames": [
+    "Windlands",
+    "Job Simulator"
+  ],
+  "executableUUID": "FF26154C-9A14-3681-B78F-420221BBC4BC",
+  "files": {
+    "Frameworks/WindowsRuntimePlugin.framework/WindowsRuntimePlugin": {
+      "bytes": 55580624,
+      "sha256": "ed65b9d6ed8218b0afa6682dea529fc2019228ff7d11c59c22d19d46ec6ec4f0"
+    },
+    "Frameworks/WindowsVRMetal.framework/WindowsVRMetal": {
+      "bytes": 69200,
+      "sha256": "3ad7e449fcc0ff08518a81d47979483cb4f9b3fa9f2a192ca45e267f7182e7df"
+    },
+    "Frameworks/WindowsVRNativeBridge.framework/WindowsVRNativeBridge": {
+      "bytes": 374544,
+      "sha256": "71eb525078c43519ab139aa44791dda5b09c92084b152a565e8750f707498496"
+    },
+    "Runtime/AVPPLAY_GUEST_BUILD_RECEIPT.json": {
+      "bytes": 28626,
+      "sha256": "9ccf822b47d72eb3c40726feba2250c427b408fa9b8794b4bfaed277011a1db0"
+    },
+    "Runtime/AVPPLAY_NATIVE_BUILD_RECEIPT.json": {
+      "bytes": 7368,
+      "sha256": "4f7cdc7ab5885cf52ecdabe442a3886f4b9d2de9d58cc3b1e52261daf7073fe3"
+    },
+    "Runtime/AVPPLAY_PE_OVERLAY_PROVENANCE.json": {
+      "bytes": 3566,
+      "sha256": "2b9a419d081766b63d10a9420c14c81cd93909e5328dcd6161cbc399faddd0b5"
+    },
+    "Runtime/AVPPLAY_RESOURCE_STAGE.json": {
+      "bytes": 32482,
+      "sha256": "faccb61edcfbad31cdd950f8431d407bdab9daead84be5fc3aa11b8f92925bc1"
+    },
+    "Runtime/HistoricalProvenance/AVPPLAY_GUEST_BUILD_RECEIPT.json": {
+      "bytes": 27371,
+      "sha256": "ea13a00ce0de84346014085062795fdb76a60995e1d2cb061dc89485655c5a85"
+    },
+    "Runtime/HistoricalProvenance/AVPPLAY_RESOURCE_STAGE.json": {
+      "bytes": 31059,
+      "sha256": "d9f30b393c8f780b2747630b90d91378fb154ea451e5520ddd307d49bedfd811"
+    },
+    "Runtime/arm64ec-windows/avrt.dll": {
+      "bytes": 589824,
+      "sha256": "51d1b22f8fb0f53b9dd4fa8f5235a2cf2a06a6d5e1b74b5d89b392e6182046ef"
+    },
+    "Runtime/arm64ec-windows/dwmapi.dll": {
+      "bytes": 655360,
+      "sha256": "7d94f01cdbd692eff8c6de5f840afbd2a8fa863a53737c3e5f81606f8a89a674"
+    },
+    "Runtime/arm64ec-windows/mmdevapi.dll": {
+      "bytes": 786432,
+      "sha256": "30019600badaf9ce2bf1cdafee0146ef54adebada9ecd085032b0bbdd224fb22"
+    },
+    "Runtime/arm64ec-windows/msvcp140.dll": {
+      "bytes": 1638400,
+      "sha256": "788b443a082352fb195e1cee6feb0460b479e1816f233a9728f83527e6163f64"
+    },
+    "Runtime/arm64ec-windows/vcruntime140.dll": {
+      "bytes": 589824,
+      "sha256": "5b25e24f07561f566620761f373685cda0b541e050375c180b1505f8b0a03e47"
+    },
+    "Runtime/arm64ec-windows/wsock32.dll": {
+      "bytes": 655360,
+      "sha256": "966580ce5f4194e21cd828e51a469cbd6e3c76be0fb52d618acd0e79b6d2f951"
+    },
+    "WineVision VR": {
+      "bytes": 5572368,
+      "sha256": "8cd254901518e69f476a6fee180eea97a62274c8fb67d70753d2fa253914eb46"
+    },
+    "WineVisionAssemblyAudit.json": {
+      "bytes": 12489,
+      "sha256": "a0def6c2f740ea54865dfef8dffb6678dcde165acdce66d354cecb58230311d9"
+    },
+    "arm64ec-windows/dock-build.json": {
+      "bytes": 1879,
+      "sha256": "3f0b297b7068472545239b9e9915f6e4c964300fb4310d17096ef33f90386a39"
+    },
+    "arm64ec-windows/dockhost.exe": {
+      "bytes": 45568,
+      "sha256": "fab19acb98b0b37b225fa2eb903c7aa469e0c41e9acdb09611a7d3f618d4d9c5"
+    }
+  },
+  "fullCleanRebuildGameplayVerified": false,
+  "nativeFrameworksRebuiltForComposite": false,
+  "purpose": "Identify key files in the retained tested composite app; no binaries, credentials, or guarantee of a fresh source rebuild",
+  "recordedDate": "2026-10-17",
+  "schemaVersion": 1,
+  "sourceCheckpointAtAudit": "0cfb648fba27e64956a0d03ea614e929cd82ed28"
+}

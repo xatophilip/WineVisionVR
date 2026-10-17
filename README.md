@@ -132,6 +132,11 @@ The full engineering record is in `docs/windows-vr-*.md` (status, graphics, inpu
 Steam, simulator). The patch files are numbered in `windows-vr-openxr/patches/` and
 `windows-runtime-plugin/patches/`.
 
+## What this fork changed
+
+See the [fixes and external dependency inventory](docs/windows-vr-fork-changes.md) for the runtime/launch
+repairs, exact source pins, additions made for testing, and the compiled inputs retained on XRDev.
+
 ## Set it up for yourself
 
 For this fork, start with the [current rebuild and run handoff](docs/windows-vr-reproducibility.md).

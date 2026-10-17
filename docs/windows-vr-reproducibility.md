@@ -31,6 +31,10 @@ They require their external input snapshots and perform signing/mutations when
 run; their README and manifest describe those inputs. Do not run them merely to
 inspect the checkpoint.
 
+For a change-by-change explanation and exact dependency pins, see
+[what this fork added](windows-vr-fork-changes.md). Key retained binary/receipt
+hashes are recorded in [the runtime inventory](windows-vr-runtime-inventory.json).
+
 ## Required inputs outside Git
 
 | Input | How to obtain or regenerate it |
