@@ -15,7 +15,7 @@ private let launchLog = LaunchLog()
 /// Logs where the app's own images and the system libraries are loaded, so a return
 /// address from the JIT debugger's fault backtrace can be mapped to a library.
 private func logImageBases() {
-    let interesting = ["WindowsRuntimePlugin", "WindowsVRNativeBridge", "WineVision VR", "libsystem_platform",
+    let interesting = ["WindowsRuntimePlugin", "WindowsVRLaunchAdapter", "WindowsVRNativeBridge", "WineVision VR", "libsystem_platform",
                        "libsystem_c.dylib", "libsystem_pthread", "libsystem_kernel", "libsystem_malloc",
                        "libc++.1", "libobjc", "CoreFoundation", "libdispatch"]
     for index in 0..<_dyld_image_count() {
@@ -63,7 +63,7 @@ final class LauncherModel {
     var isShowingImportError = false
     private(set) var importError: String?
 
-    @ObservationIgnored private let runtime = NativePluginWindowsRuntime()
+    @ObservationIgnored private let runtime = NativePluginWindowsRuntime(frameworkName: Bundle.main.object(forInfoDictionaryKey: "WVRRuntimePluginFramework") as? String ?? "WindowsRuntimePlugin.framework")
     @ObservationIgnored private let jitCoordinator = JITCoordinator()
     @ObservationIgnored private var sessionDiagnostics: SessionDiagnostics?
     private var diagnosticsFailureReason: String?
@@ -679,6 +679,9 @@ final class LauncherModel {
     /// Keep routine graphics logging inexpensive. Explicit DXMT overrides remain
     /// available for shader diagnosis without flooding the normal frame loop.
     private static func configureGraphicsEnvironment() {
+        WindowsVRTranslationEnvironment.applyDefaults()
+        let guestFoveation = wvr_guest_foveation_install_v1()
+        launchLog.notice("Guest foveation transport installed=\(guestFoveation != 0)")
         #if DEBUG
         if getenv("DXMT_LOG_LEVEL") == nil { setenv("DXMT_LOG_LEVEL", "info", 1) }
         #endif
@@ -781,7 +784,9 @@ final class LauncherModel {
             Self.configureGraphicsEnvironment()
             try Self.configureAudioEnvironment()
             if launchManifest.id == "steam.shared" && launchManifest.presentation == .immersiveVR {
-                try OpenXRRegistration.install(prefix: MadeiraDock.prefix, architecture: launchManifest.guestArchitecture == .x86 ? .x86 : .x64)
+                let architecture = launchManifest.guestArchitecture == .x86
+                    ? "x86" : (runtime.guestRuntimeArchitecture ?? "x64")
+                try OpenXRRegistration.install(prefix: MadeiraDock.prefix, architecture: architecture)
             }
             try await runtime.launch(manifest: launchManifest, gameDirectory: gameDirectory)
             launchLog.notice("Launch: runtime accepted the launch")

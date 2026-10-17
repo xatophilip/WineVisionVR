@@ -17,6 +17,7 @@ def function(signature):
 preamble = r'''
 #include <openxr/openxr.h>
 #include "WindowsVRHandles.h"
+#include "WindowsVRActionPlan.h"
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -32,11 +33,11 @@ constexpr uint32_t kControllerLeft=0,kControllerRight=1;
 struct Instance;struct Action;
 struct ActionValue {bool boolean=false;float scalar=0;XrVector2f vector{};XrTime lastChangeTime=0;bool changed=false;};
 struct ActionSet {Instance* instance;std::vector<XrAction> actions;bool bindingsAttached=false;};
-struct Action {std::string name;ActionSet* set;XrActionType type;std::vector<XrPath> subactionPaths,bindingPaths;std::unordered_map<uint32_t,ActionValue> values;};
+struct Action {std::string name;ActionSet* set;XrActionType type;std::vector<XrPath> subactionPaths,bindingPaths,plannedBindingPaths;WVRActionRolePlan rolePlans[2];std::unordered_map<uint32_t,ActionValue> values;};
 struct Instance {std::mutex mutex;std::unordered_map<std::string,XrPath> paths;std::unordered_map<XrPath,std::string> pathStrings;std::vector<std::unique_ptr<Action>> actions;std::vector<std::unique_ptr<ActionSet>> actionSets;std::unordered_map<XrPath,XrPath> interactionProfiles;std::unordered_map<XrPath,XrAction> bindings;std::unordered_map<XrPath,std::vector<XrActionSuggestedBinding>> profileBindings;XrPath selectedProfile=XR_NULL_PATH;int selectedProfilePriority=-1;uint64_t nextPath=1;};
 struct WVRDXMTControllerV1 {uint64_t buttons=0,timestampNanoseconds=0;uint32_t flags=7;float trigger=0,grip=0,thumbstickX=0,thumbstickY=0;};
 struct ControllerSample {WVRDXMTControllerV1 left{},right{};};
-struct Session {Instance* instance;std::atomic<XrSessionState> state{XR_SESSION_STATE_FOCUSED};std::recursive_mutex actionMutex;std::mutex eventMutex;bool interactionProfileChanged=false;bool begun=true;bool actionSetsAttached=true;std::vector<XrActionSet> attachedActionSets,activeActionSets;std::unordered_map<XrActionSet,uint32_t> activeSetSubactions;ControllerSample controllers;};
+struct Session {Instance* instance;std::atomic<XrSessionState> state{XR_SESSION_STATE_FOCUSED};std::recursive_mutex actionMutex;std::mutex eventMutex;bool interactionProfileChanged=false;bool begun=true;bool actionSetsAttached=true;std::vector<XrActionSet> attachedActionSets,activeActionSets;std::unordered_map<XrActionSet,uint32_t> activeSetSubactions;std::vector<XrActiveActionSet> synchronizedActionSets;ControllerSample controllers;};
 Instance* GetInstance(XrInstance h){return reinterpret_cast<Instance*>(h);}
 Action* GetAction(XrAction h){return reinterpret_cast<Action*>(h);}
 ActionSet* GetActionSet(XrActionSet h){return reinterpret_cast<ActionSet*>(h);}
@@ -48,14 +49,18 @@ int SubmitSessionHaptic(Session*,const WVRDXMTHapticV1* request){sentHaptics.pus
 ControllerSample sampledControllers;
 bool failControllerRead=false;
 unsigned observeCalls=0;
-void ObserveSessionExitRequest(Session*){++observeCalls;}
+struct WVRFrameStateRequestV1 {WVRDXMTControllerV1 controllers[2];};
+bool useFrameState=false;
+bool GetSessionFrameState(Session*,WVRFrameStateRequestV1& out){if(!useFrameState)return false;out.controllers[0]=sampledControllers.left;out.controllers[1]=sampledControllers.right;return true;}
+void CopyFrameController(const WVRDXMTControllerV1& in,WVRDXMTControllerV1& out){out=in;}
+void ObserveSessionExitRequest(Session*,void*,void*,void*,const WVRFrameStateRequestV1*){++observeCalls;}
 int GetSessionController(Session*,uint32_t role,WVRDXMTControllerV1* out){if(failControllerRead)return -1;*out=role==0?sampledControllers.left:sampledControllers.right;return 0;}
 #define FAILED(result) ((result)<0)
 uint64_t ButtonForBinding(const std::string&);
 '''
 functions = [function(x) for x in [
     'bool AnalogBinding(', 'uint32_t RoleForPath(', 'XrPath UserPathForRole(', 'bool ActionAllowsRole(',
-    'bool ActionHasBindingForRole(', 'uint64_t ButtonForBinding(const std::string &binding) {',
+    'void CompileActionBindings(', 'bool ActionHasBindingForRole(', 'uint64_t ButtonForBinding(const std::string &binding) {',
     'ActionValue SampleAction(', 'void UpdateActionSnapshot(', 'bool ControllerConnected(', 'bool ActionSetIsActive(', 'bool ActionSetRoleIsActive(', 'XrResult XRAPI_CALL SyncActions(', 'XrResult GetActionSnapshot(',
     'XrResult XRAPI_CALL SuggestInteractionProfileBindings(', 'XrResult XRAPI_CALL AttachSessionActionSets(',
     'XrResult XRAPI_CALL ApplyHapticFeedback(', 'XrResult XRAPI_CALL StopHapticFeedback(']]

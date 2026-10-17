@@ -31,9 +31,6 @@ if(WINDOWS_VR_USE_LLVM_MINGW)
     if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
         message(FATAL_ERROR "WINDOWS_VR_USE_LLVM_MINGW is the macOS-hosted cross-build path.")
     endif()
-    if(WINDOWS_VR_BUILD_ARM64EC)
-        message(FATAL_ERROR "The llvm-mingw package path currently stages x64 only; ARM64EC remains a separate Visual Studio build.")
-    endif()
     set(LLVM_MINGW_TOOLCHAIN_FILE
         "${CMAKE_CURRENT_SOURCE_DIR}/../windows-vr-openxr/cmake/toolchains/llvm-mingw-x64.cmake")
     if(NOT EXISTS "${LLVM_MINGW_TOOLCHAIN_FILE}")
@@ -79,7 +76,7 @@ set(OPENCOMPOSITE_REPOSITORY "https://gitlab.com/znixian/OpenOVR.git")
 
 function(add_opencomposite_variant variant platform)
     set(_cross_cmake_args ${OPENCOMPOSITE_CROSS_CMAKE_ARGS})
-    set(_overlay_source_root "${OPENCOMPOSITE_OVERLAY_SOURCE_ROOT}")
+    set(_overlay_source_root "${OPENCOMPOSITE_OVERLAY_SOURCE_ROOT}/${variant}")
     set(_entry "WVRDllMainCRTStartup")
     if(variant STREQUAL "x86" AND WINDOWS_VR_USE_LLVM_MINGW)
         if(NOT EXISTS "${LLVM_MINGW_ROOT}/bin/i686-w64-mingw32-clang++")
@@ -89,7 +86,6 @@ function(add_opencomposite_variant variant platform)
             "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/../windows-vr-openxr/cmake/toolchains/llvm-mingw-x86.cmake"
             "-DLLVM_MINGW_ROOT=${LLVM_MINGW_ROOT}")
         # Separate copies avoid patch and generated-source races with x64.
-        set(_overlay_source_root "${OPENCOMPOSITE_OVERLAY_SOURCE_ROOT}-x86")
         set(_entry "_WVRDllMainCRTStartup@12")
     endif()
     set(_generator_platform_args)
@@ -98,6 +94,10 @@ function(add_opencomposite_variant variant platform)
     endif()
 
     if(WINDOWS_VR_USE_LLVM_MINGW)
+        if(variant STREQUAL "arm64ec")
+            list(FILTER _cross_cmake_args EXCLUDE REGEX "^-DCMAKE_TOOLCHAIN_FILE=")
+            list(APPEND _cross_cmake_args "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/../windows-vr-openxr/cmake/toolchains/llvm-mingw-arm64ec.cmake")
+        endif()
         ExternalProject_Add("OpenComposite_${variant}"
             SOURCE_DIR "${_overlay_source_root}"
             BINARY_DIR "${CMAKE_BINARY_DIR}/build/${variant}"
@@ -113,9 +113,13 @@ function(add_opencomposite_variant variant platform)
                 COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0007-mingw-msvc-aggregate-return.patch"
                 COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-d3d11-inverted-eye-bounds.patch"
                 COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0009-i386-msvc-aggregate-return.patch"
+                COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0010-crop-shader-resource-cache.patch"
+                COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0006-writable-application-state.patch"
+                COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0011-openvr-scene-depth-after-crop.patch"
             CMAKE_ARGS
                 "-DCMAKE_INSTALL_PREFIX=${OPENCOMPOSITE_STAGE_ROOT}/WindowsVR/Guest/${variant}"
                 "-DERROR_ON_WARNING=OFF"
+                "-DOC_VERSION=WineVisionVR ${variant} ${OPENCOMPOSITE_COMMIT}"
                 "-DOC_BACKTRACE=OFF"
                 # Do not resolve x64 C++ objects/vtables against the shared
                 # ARM64EC libc++ runtime in Wine's global DLL search path.
@@ -139,6 +143,7 @@ function(add_opencomposite_variant variant platform)
         CMAKE_GENERATOR "${CMAKE_GENERATOR}"
         ${_generator_platform_args}
         PATCH_COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${OPENCOMPOSITE_GRAPHICS_PATCH}"
+            COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/0008-openvr-scene-depth.patch"
         CMAKE_ARGS
             "-DCMAKE_INSTALL_PREFIX=${OPENCOMPOSITE_STAGE_ROOT}/WindowsVR/Guest/${variant}"
             "-DERROR_ON_WARNING=ON"

@@ -164,6 +164,13 @@ cmake -S "$ROOT/windows-vr-openxr" -B "$BUILD_ROOT/openxr-mingw" -G Ninja \
     -DOPENXR_SDK_SOURCE_ROOT="$source_cache/openxr" \
     -DWINDOWS_VR_GUEST_STAGE="$GUEST_STAGE/WindowsVR/Guest/x64"
 cmake --build "$BUILD_ROOT/openxr-mingw" --config Release
+cmake -S "$ROOT/windows-vr-openxr" -B "$BUILD_ROOT/openxr-arm64ec" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/windows-vr-openxr/cmake/toolchains/llvm-mingw-arm64ec.cmake" \
+    -DLLVM_MINGW_ROOT="$AVPPLAY_LLVM_MINGW_ROOT" -DCMAKE_BUILD_TYPE=Release \
+    -DOPENXR_SDK_SOURCE_ROOT="$source_cache/openxr" \
+    -DWINDOWS_VR_GUEST_STAGE="$GUEST_STAGE/WindowsVR/Guest/arm64ec"
+cmake --build "$BUILD_ROOT/openxr-arm64ec" --config Release
+
 
 if [[ "$x86_enabled" == 1 ]]; then
     cmake -S "$ROOT/windows-vr-openxr" -B "$BUILD_ROOT/openxr-mingw-x86" -G Ninja \
@@ -180,13 +187,18 @@ if [[ "$d3d12_enabled" == 1 ]]; then
     opencomposite_d3d12_args=(-DWINDOWS_VR_ENABLE_D3D12=ON)
 fi
 cmake -S "$ROOT/windows-vr-openvr" -B "$BUILD_ROOT/opencomposite-mingw" -G Ninja \
-    -DWINDOWS_VR_USE_LLVM_MINGW=ON \
+    -DWINDOWS_VR_USE_LLVM_MINGW=ON -DWINDOWS_VR_BUILD_ARM64EC=ON \
     -DWINDOWS_VR_BUILD_X86="$([[ "$x86_enabled" == 1 ]] && echo ON || echo OFF)" \
     -DLLVM_MINGW_ROOT="$AVPPLAY_LLVM_MINGW_ROOT" \
     -DOPENCOMPOSITE_SOURCE_ROOT="$source_cache/opencomposite" \
     -DOPENCOMPOSITE_STAGE_ROOT="$GUEST_STAGE" \
     "${opencomposite_d3d12_args[@]}"
 cmake --build "$BUILD_ROOT/opencomposite-mingw" --target package_opencomposite --config Release
+python3 "$ROOT/windows-vr-tools/stage_arm64ec_guest.py" \
+    --output "$GUEST_STAGE/WindowsVR/Guest/arm64ec" \
+    --openvr "$GUEST_STAGE/WindowsVR/Guest/arm64ec/OpenComposite/bin/vrclient_x64.dll" \
+    --openxr "$GUEST_STAGE/WindowsVR/Guest/arm64ec/wvr_openxr.dll"
+
 
 if [[ "${AVPPLAY_BUILD_WINE_PE:-0}" == "1" ]]; then
     AVPPLAY_ALLOW_RUNTIME_BUILD=1 AVPPLAY_BUILD_WINE_PE=1 \
@@ -195,6 +207,26 @@ if [[ "${AVPPLAY_BUILD_WINE_PE:-0}" == "1" ]]; then
 else
     WINE_RESOURCE_SOURCE="$AVPPLAY_WINE_RESOURCE_SOURCE"
 fi
+# The modern transport changes guest shader coordinates; build the matching
+# native AIR writer from the same patched DXMT and locked LLVM source closure.
+# Legacy/x86 builds retain the compatibility fallback in project.yml.
+app_spec="$ROOT/visionos-windows-vr/project.yml"
+if [[ "$d3d12_enabled" == 1 ]]; then
+    export AVPPLAY_AIR_OUTPUT="${AVPPLAY_AIR_OUTPUT:-$BUILD_ROOT/air-writer}"
+    AVPPLAY_AIR_DXMT_SOURCE="$runtime_source/dxmt" \
+        AVPPLAY_AIR_LLVM_SOURCE="$runtime_source/toolchains/llvm-project" \
+        AVPPLAY_AIR_LLVM_BUILD="$runtime_source/toolchains/llvm-ios-build" \
+        AVPPLAY_AIR_PLATFORM_HEADER="${AVPPLAY_D3D12_BUILD_ROOT:-$BUILD_ROOT}/d3d12-generated/wvr_metallib_platform.h" \
+        bash "$ROOT/windows-vr-tools/build_air_writer.sh"
+    app_spec="$ROOT/visionos-windows-vr/project.source-air.yml"
+fi
+
+python3 "$ROOT/windows-vr-tools/stage_fex_cache.py" \
+    --fex-build "$runtime_source/FEX/build-arm64ec-avp" \
+    --llvm-mingw "$AVPPLAY_LLVM_MINGW_ROOT" \
+    --runtime "$WINE_RESOURCE_SOURCE" \
+    --output "$GUEST_STAGE/WindowsVR/CacheTools"
+
 stage_args=(
     --source "$WINE_RESOURCE_SOURCE"
     --runtime-source "$runtime_source"
@@ -224,7 +256,7 @@ AVPPLAY_MADEIRA_STEAM_SOURCE="$source_cache/madeira" bash "$ROOT/windows-vr-tool
 bash "$ROOT/windows-vr-tools/build_desktop_demo.sh"
 bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
 
-xcodegen generate --spec "$ROOT/visionos-windows-vr/project.yml" \
+xcodegen generate --spec "$app_spec" \
     --project "$ROOT/visionos-windows-vr"
 signing_args=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO)
 if [[ "$sign_app" == 1 ]]; then

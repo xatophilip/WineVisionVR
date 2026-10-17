@@ -26,7 +26,8 @@ def function(signature):
 request = source[source.index('struct LaunchRequest {'):source.index('\n};', source.index('struct LaunchRequest {')) + 3]
 pieces = [request, *(function(signature) for signature in (
     'bool PresentationIsReady(', 'bool IsString(', 'bool ReadString(',
-    'bool IsAllowedEnvironmentKey(', 'bool ParseRequest('))]
+    'bool IsAllowedEnvironmentKey(', 'bool ParseRequest(',
+    'uint16_t RuntimeGuestMachine(', 'bool SupportsPersistentFEXCache('))]
 probe = r'''
 int main() {
     @autoreleasepool {
@@ -69,6 +70,18 @@ int main() {
             LaunchRequest rejected;
             assert(!parse(base, rejected));
         }
+        // A 64-bit Steam launcher can start a 32-bit child: classify the child,
+        // not just dockhost.exe, before enabling the 64-bit offline compiler.
+        LaunchRequest cacheRequest;
+        cacheRequest.backend = "windowsWineFEX";
+        assert(SupportsPersistentFEXCache(cacheRequest, 0x8664));
+        assert(!SupportsPersistentFEXCache(cacheRequest, 0x014c));
+        cacheRequest.guestArchitecture = "x86";
+        assert(!SupportsPersistentFEXCache(cacheRequest, 0x8664));
+        cacheRequest.guestArchitecture = "arm64ec";
+        assert(SupportsPersistentFEXCache(cacheRequest, 0x8664));
+        cacheRequest.backend = "nativeARM64";
+        assert(!SupportsPersistentFEXCache(cacheRequest, 0xA641));
         WVRCompositorReadinessV1 readiness{};
         assert(!PresentationIsReady(desktop, readiness));
         assert(!PresentationIsReady(legacy, readiness));

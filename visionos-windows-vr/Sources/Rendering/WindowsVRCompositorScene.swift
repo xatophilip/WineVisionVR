@@ -88,22 +88,23 @@ private struct WindowsVRLayerRendererTransfer: @unchecked Sendable {
     let renderer: LayerRenderer
 }
 
-/// Guest frames use a uniform eye raster today. Keep foveation disabled until
-/// the guest render pass consumes Apple's rasterization-rate maps. Dedicated
-/// textures are preferred; the target mapper also handles layered eye slices.
+/// System eye-tracked maps drive presentation and eligible translated game
+/// passes. Guest logical eye dimensions remain independent of physical storage.
 @available(visionOS 1.0, *)
 private struct WindowsVRCompositorConfiguration: CompositorLayerConfiguration {
     func makeConfiguration(
         capabilities: LayerRenderer.Capabilities,
         configuration: inout LayerRenderer.Configuration
     ) {
-        let layouts = capabilities.supportedLayouts(options: [])
+        let foveatedLayouts = capabilities.supportedLayouts(options: .foveationEnabled)
+        let foveation = capabilities.supportsFoveation && !foveatedLayouts.isEmpty
+        let layouts = foveation ? foveatedLayouts : capabilities.supportedLayouts(options: [])
         if layouts.contains(.dedicated) {
             configuration.layout = .dedicated
         } else if layouts.contains(.layered) {
             configuration.layout = .layered
         }
-        configuration.isFoveationEnabled = false
+        configuration.isFoveationEnabled = foveation
         // Render-quality overrides are only supported with foveation. Leave the
         // system's non-foveated quality untouched for uniform guest eye textures.
         // Match the guest runtime's advertised D3D11 sRGB swapchain format.
@@ -148,10 +149,13 @@ private final class WindowsVRCompositorRenderer {
     private let spatialLibrary: MTLLibrary?
     private let spatialSampler: MTLSamplerState?
     private let presentationDepthState: MTLDepthStencilState?
+    private var reconstructionContext: UnsafeMutableRawPointer?
+    private var synthesisContext: UnsafeMutableRawPointer?
     private var spatialPipelines: [UInt: any MTLRenderPipelineState] = [:]
     // Owned snapshots outlive a guest swapchain lease. They are updated and read
     // on the same Metal command queue, never by retaining a reusable guest image.
     private var lastEyeSnapshots: [any MTLTexture] = []
+    private var presentationPlans: [SpatialEyePlan] = []
     private var snapshotGeneration: UInt64 = 0
     private var snapshotTracking: WVRFrameTrackingV1?
     private var snapshotRenderPose: WindowsVRRenderPose?
@@ -176,7 +180,7 @@ private final class WindowsVRCompositorRenderer {
         float2 origin;
         float2 extent;
         uint slice;
-        uint padding;
+        uint targetLayer;
         float presentationDepth;
         float reserved;
         float4x4 sourceFromDestinationClip;
@@ -184,6 +188,7 @@ private final class WindowsVRCompositorRenderer {
     struct WVRSpatialVertexOut {
         float4 position [[position]];
         float3 sourceClip;
+        uint layer [[render_target_array_index]];
     };
     vertex WVRSpatialVertexOut wvr_spatial_vertex(uint vertexID [[vertex_id]],
         constant WVRSpatialSource& region [[buffer(0)]]) {
@@ -194,6 +199,7 @@ private final class WindowsVRCompositorRenderer {
         // xy/w inputs, then divide in the fragment to preserve projective timewarp.
         float4 clip = region.sourceFromDestinationClip * out.position;
         out.sourceClip = clip.xyw;
+        out.layer = region.targetLayer;
         return out;
     }
     fragment float4 wvr_spatial_fragment(
@@ -242,13 +248,27 @@ private final class WindowsVRCompositorRenderer {
         depthDescriptor.depthCompareFunction = .always
         depthDescriptor.isDepthWriteEnabled = true
         self.presentationDepthState = layerRenderer.device.makeDepthStencilState(descriptor: depthDescriptor)
+        let synthesisMode = UserDefaults.standard.integer(forKey: "WVRFrameSynthesisMode")
+        if (1...2).contains(synthesisMode) {
+            synthesisContext = wvr_synthesis_create_v1(Unmanaged.passUnretained(layerRenderer.device as AnyObject).toOpaque(), UInt32(synthesisMode))
+            LaunchLogFile.append("synthesis", "Custom Metal reconstruction mode=\(synthesisMode) initialized=\(synthesisContext != nil); source render scale unchanged.")
+        }
+        if synthesisMode == 0 && UserDefaults.standard.bool(forKey: "WVRReconstructionValidation") {
+            reconstructionContext = wvr_reconstruction_create_v1(Unmanaged.passUnretained(layerRenderer.device as AnyObject).toOpaque())
+            LaunchLogFile.append("reconstruction", "Shadow validation requested; initialized=\(reconstructionContext != nil). Display remains normal stereo.")
+        }
         for array in [false, true] {
             _ = spatialPipeline(for: .bgra8Unorm_srgb, depthFormat: .depth32Float, sourceIsArray: array)
         }
     }
 
+    deinit {
+        if let reconstructionContext { wvr_reconstruction_destroy_v1(reconstructionContext) }
+        if let synthesisContext { wvr_synthesis_destroy_v1(synthesisContext) }
+    }
+
     func run() async {
-        LaunchLogFile.append("compositor", "Renderer initialized: uniform eye textures, system quality, foveation=false")
+        LaunchLogFile.append("compositor", "Renderer initialized: uniform guest eyes, system quality, eyeTrackedFoveation=\(layerRenderer.configuration.isFoveationEnabled)")
         wvr_compositor_pause_v1()
         let deviceObject = layerRenderer.device as AnyObject
         let bindStatus = wvr_compositor_bind_metal_device_v1(Unmanaged.passUnretained(deviceObject).toOpaque())
@@ -409,9 +429,22 @@ private final class WindowsVRCompositorRenderer {
         let width = UInt32(max(0, Int(viewport.width.rounded(.down))))
         let height = UInt32(max(0, Int(viewport.height.rounded(.down))))
         guard width > 0, height > 0 else { return nil }
+        let rateMap = drawable.rasterizationRateMaps.indices.contains(map.textureIndex)
+            ? drawable.rasterizationRateMaps[map.textureIndex] : nil
+        if drawable.target == .builtIn && layerRenderer.configuration.isFoveationEnabled && rateMap == nil { return nil }
+        if let rateMap {
+            let layer = rateMap.layerCount > 1 ? map.sliceIndex : 0
+            guard layer < rateMap.layerCount else { return nil }
+            let physical = rateMap.physicalSize(layer: layer)
+            guard physical.width <= texture.width, physical.height <= texture.height,
+                  viewport.originX >= 0, viewport.originY >= 0,
+                  viewport.originX + viewport.width <= Double(rateMap.screenSize.width),
+                  viewport.originY + viewport.height <= Double(rateMap.screenSize.height) else { return nil }
+        }
         return EyeTarget(
             texture: texture,
             depthTexture: drawable.depthTextures[map.textureIndex],
+            rateMap: rateMap,
             slice: map.sliceIndex,
             originX: Int(viewport.originX.rounded(.down)),
             originY: Int(viewport.originY.rounded(.down)),
@@ -428,14 +461,23 @@ private final class WindowsVRCompositorRenderer {
               let view1 = target(for: drawable, viewIndex: 1)
         else { return false }
 
-        // Game swapchains use RGBA sRGB; the display can remain BGRA. The
-        // spatial presentation shader samples color and writes the display's
-        // format, so no cross-format blit or extra conversion pass is needed.
+        let foveated = layerRenderer.configuration.isFoveationEnabled
+        // Preserve the existing M2 profile's uniform guest eye raster. Never
+        // advertise gaze-varying physical allocation dimensions to OpenXR.
+        let width = UInt32(Bundle.main.object(forInfoDictionaryKey: "WVRUniformEyeWidth") as? Int ?? 1888)
+        let height = UInt32(Bundle.main.object(forInfoDictionaryKey: "WVRUniformEyeHeight") as? Int ?? 1792)
+        // Guest D3D11 swapchains remain RGBA sRGB even when the compositor
+        // display target is BGRA. Presentation samples and converts the format.
         let producerFormat = UInt32(MTLPixelFormat.rgba8Unorm_srgb.rawValue)
-        return wvr_compositor_publish_targets_v1(
-            view0.width, view0.height, producerFormat,
-            view1.width, view1.height, producerFormat
-        ) == 0
+        let status = wvr_compositor_publish_targets_v1(
+            foveated ? width : view0.width, foveated ? height : view0.height, producerFormat,
+            foveated ? width : view1.width, foveated ? height : view1.height, producerFormat)
+        if status == 0 {
+            wvr_guest_foveation_publish_maps_v1(
+                view0.rateMap.map { Unmanaged.passUnretained($0 as AnyObject).toOpaque() }, UInt32(view0.rateMap?.layerCount ?? 0 > 1 ? view0.slice : 0),
+                view1.rateMap.map { Unmanaged.passUnretained($0 as AnyObject).toOpaque() }, UInt32(view1.rateMap?.layerCount ?? 0 > 1 ? view1.slice : 0))
+        }
+        return status == 0
     }
 
     private func publishFrameTracking(for drawable: LayerRenderer.Drawable) {
@@ -535,11 +577,20 @@ private final class WindowsVRCompositorRenderer {
 
         var acquired = WVRAcquiredStereoFrameV2()
         acquired.structSize = UInt32(MemoryLayout<WVRAcquiredStereoFrameV2>.size)
-        if LaunchDiagnostics.enabled {
+        if LaunchDiagnostics.enabled || reconstructionContext != nil || synthesisContext != nil {
             let now=CACurrentMediaTime()
             if now-lastGPUStatisticsTime>=5 {
                 lastGPUStatisticsTime=now
                 var text=[CChar](repeating:0,count:2048)
+                if wvr_guest_foveation_copy_stats_v1(&text,UInt32(text.count)) != 0 {
+                    LaunchLogFile.append("guest-foveation",String(cString:text))
+                }
+                if let synthesisContext, wvr_synthesis_copy_stats_v1(synthesisContext, &text, UInt32(text.count)) != 0 {
+                    LaunchLogFile.append("synthesis", String(cString: text))
+                }
+                if let reconstructionContext, wvr_reconstruction_copy_stats_v1(reconstructionContext, &text, UInt32(text.count)) != 0 {
+                    LaunchLogFile.append("reconstruction", String(cString: text))
+                }
                 if wvr_metal_copy_gpu_statistics(&text,UInt32(text.count)) != 0 {
                     LaunchLogFile.append("gpu-timing",String(cString:text))
                 }
@@ -595,9 +646,9 @@ private final class WindowsVRCompositorRenderer {
         var producerTargets = WVRRenderTargetInfoV1()
         producerTargets.structSize = UInt32(MemoryLayout<WVRRenderTargetInfoV1>.size)
         let targetStatus = wvr_compositor_copy_targets_v1(&producerTargets)
-        let producerWidths = [producerTargets.width.0, producerTargets.width.1]
-        let producerHeights = [producerTargets.height.0, producerTargets.height.1]
-        let producerFormats = [producerTargets.pixelFormat.0, producerTargets.pixelFormat.1]
+        let producerWidths = WindowsVRStereoPair(first: producerTargets.width.0, second: producerTargets.width.1)
+        let producerHeights = WindowsVRStereoPair(first: producerTargets.height.0, second: producerTargets.height.1)
+        let producerFormats = WindowsVRStereoPair(first: producerTargets.pixelFormat.0, second: producerTargets.pixelFormat.1)
         let hasCurrentTargets = targetStatus == 0 && producerTargets.generation != 0 &&
             producerWidths.allSatisfy { $0 > 0 } && producerHeights.allSatisfy { $0 > 0 }
 
@@ -612,7 +663,7 @@ private final class WindowsVRCompositorRenderer {
                 projections: (WindowsVRPresentationMath.matrix(from: tracking.projection.0), WindowsVRPresentationMath.matrix(from: tracking.projection.1)))
         }
         let targets = (0..<drawable.views.count).compactMap { target(for: drawable, viewIndex: $0) }
-        var sources = [leftSource, rightSource]
+        var sources = WindowsVRStereoPair(first: leftSource, second: rightSource)
         let isNewGuestFrame = hasFrame
         if snapshotGeneration != producerTargets.generation || !hasCurrentTargets {
             lastEyeSnapshots.removeAll()
@@ -624,9 +675,11 @@ private final class WindowsVRCompositorRenderer {
            snapshotGeneration == producerTargets.generation {
             renderTracking = snapshotTracking
             renderPose = snapshotRenderPose
-            sources = lastEyeSnapshots.map {
-                EyeSource(texture: $0, slice: 0, x: 0, y: 0, width: $0.width, height: $0.height)
-            }
+            sources = WindowsVRStereoPair(
+                first: EyeSource(texture: lastEyeSnapshots[0], slice: 0, x: 0, y: 0,
+                    width: lastEyeSnapshots[0].width, height: lastEyeSnapshots[0].height),
+                second: EyeSource(texture: lastEyeSnapshots[1], slice: 0, x: 0, y: 0,
+                    width: lastEyeSnapshots[1].width, height: lastEyeSnapshots[1].height))
         }
         let matchesTarget = (hasFrame || lastEyeSnapshots.count == 2) && hasCurrentTargets && !drawable.views.isEmpty && drawable.views.count <= 2 &&
             targets.count == drawable.views.count && sources.count == 2 && sources.allSatisfy { $0 != nil } && (!hasFrame || readyEvent != nil) &&
@@ -654,29 +707,89 @@ private final class WindowsVRCompositorRenderer {
             LaunchLogFile.append("compositor", "render: matchesTarget=\(matchesTarget) hasFrame=\(hasFrame) hasTargets=\(hasCurrentTargets) views=\(drawable.views.count) targets=\(targets.count) event=\(readyEvent != nil) \(detail)")
         }
 
-        // Copy on the same serial GPU queue before presenting, then return
-        // guest images as soon as that copy finishes. Presentation only reads
-        // owned snapshots, so producer reuse need not wait for encodePresent.
-        var leaseCompletionBuffer: any MTLCommandBuffer = commandBuffer
-        var transferred = false
-        if hasFrame && matchesTarget, let leftSource, let rightSource,
-           let readyEvent, let transfer = metalCommandQueue?.makeCommandBuffer() {
-            transfer.label = "wvr.snapshot"
-            transfer.encodeWaitForEvent(readyEvent, value: acquired.producerReadyValue)
-            if cacheEyes([leftSource, rightSource], generation: producerTargets.generation,
-                         tracking: renderTracking, renderPose: renderPose, on: transfer) {
-                let status = transferStatus
-                transfer.addCompletedHandler { completed in
-                    if let error = completed.error {
-                        status.markFailed()
-                        LaunchLogFile.append("compositor", "Snapshot transfer failed: \(error)")
+        // Present directly from the guest textures on the same command buffer,
+        // and refresh the cached snapshots for display-rate reprojection when
+        // no new guest frame is available on a subsequent display refresh.
+        if matchesTarget {
+            if hasFrame, let readyEvent {
+                commandBuffer.encodeWaitForEvent(readyEvent, value: acquired.producerReadyValue)
+            }
+            var cachedBySynthesis = false
+            var synthesisAtDisplayPose = false
+            if let synthesisContext, targets.count == 2 {
+                let commandPointer = Unmanaged.passUnretained(commandBuffer as AnyObject).toOpaque()
+                var ingestOK = !hasFrame
+                if hasFrame, var tracking = renderTracking {
+                    ingestOK = wvr_synthesis_ingest_v1(synthesisContext, &acquired, &tracking,
+                        producerTargets.generation, commandPointer) == 0
+                }
+                func ownedSynthesisSource(_ eye: UInt32) -> (any MTLTexture)? {
+                    guard let pointer = wvr_synthesis_copy_source_v1(synthesisContext, eye) else { return nil }
+                    return Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue() as? any MTLTexture
+                }
+                if hasFrame && ingestOK, let left = ownedSynthesisSource(0), let right = ownedSynthesisSource(1) {
+                    lastEyeSnapshots = [left, right]
+                    snapshotGeneration = producerTargets.generation
+                    snapshotTracking = renderTracking
+                    snapshotRenderPose = renderPose
+                    cachedBySynthesis = true
+                }
+                if !ingestOK { wvr_synthesis_reset_v1(synthesisContext) }
+                var synthesisStatus: Int32 = 1
+                if ingestOK {
+                    let displayTime = timestampSeconds(drawable.frameTiming.presentationTime)
+                    // Query as late as possible and give the system the exact same
+                    // SDK-predicted anchor used to reconstruct the displayed eyes.
+                    if let anchor = worldTracking.queryDeviceAnchor(atTimestamp: displayTime), anchor.isTracked {
+                        drawable.deviceAnchor = anchor
+                        synthesisStatus = withUnsafeTemporaryAllocation(of: WVRFrameSynthesisViewV1.self, capacity: 2) { views in
+                            views.initialize(repeating: WVRFrameSynthesisViewV1())
+                            for eye in 0..<2 {
+                                var view = WVRFrameSynthesisViewV1()
+                                let origin = anchor.originFromAnchorTransform * drawable.views[eye].transform
+                                let projection = (eye == 0 ? projections.0 : projections.1).projection
+                                withUnsafeMutableBytes(of: &view.originFromEye) { destination in
+                                    withUnsafeBytes(of: origin) { destination.copyBytes(from: $0) }
+                                }
+                                withUnsafeMutableBytes(of: &view.projection) { destination in
+                                    withUnsafeBytes(of: projection) { destination.copyBytes(from: $0) }
+                                }
+                                view.width = targets[eye].width
+                                view.height = targets[eye].height
+                                views[eye] = view
+                            }
+                            return wvr_synthesis_encode_display_v1(synthesisContext, UInt64(max(0, displayTime) * 1_000_000_000), views.baseAddress, hasFrame ? 0 : 1, commandPointer)
+                        }
                     }
                 }
-                sources = lastEyeSnapshots.map {
-                    EyeSource(texture: $0, slice: 0, x: 0, y: 0, width: $0.width, height: $0.height)
+                if synthesisStatus == 0 {
+                    func reconstructedEye(_ eye: UInt32) -> EyeSource? {
+                        guard let pointer = wvr_synthesis_copy_output_v1(synthesisContext, eye),
+                              let output = Unmanaged<AnyObject>.fromOpaque(pointer).takeRetainedValue() as? any MTLTexture else { return nil }
+                        return EyeSource(texture: output, slice: 0, x: 0, y: 0, width: output.width, height: output.height)
+                    }
+                    if let left = reconstructedEye(0), let right = reconstructedEye(1) {
+                        sources = WindowsVRStereoPair(first: left, second: right)
+                        synthesisAtDisplayPose = true
+                    }
                 }
-                transferred = true
-                leaseCompletionBuffer = transfer
+            }
+            presentationPlans.removeAll(keepingCapacity: true)
+            for index in targets.indices {
+                guard let source = sources[index],
+                      let depth = presentationDepth(projection: (index == 0 ? projections.0 : projections.1).projection, range: drawable.depthRange) else { continue }
+                presentationPlans.append(SpatialEyePlan(source: source, target: targets[index], depth: depth,
+                    reprojection: synthesisAtDisplayPose ? matrix_identity_float4x4 : reprojection(for: drawable, viewIndex: index, renderPose: renderPose,
+                                               projection: index == 0 ? projections.0 : projections.1)))
+            }
+            if presentationPlans.count != targets.count || !encodeSpatialPresentations(presentationPlans, on: commandBuffer) {
+                for target in targets { clear(target, on: commandBuffer) }
+                Self.log.error("Unable to encode foveated stereo presentation")
+            }
+            presentationPlans.removeAll(keepingCapacity: true)
+            if hasFrame, let leftSource, let rightSource,
+               (cachedBySynthesis || cacheEyes([leftSource, rightSource], generation: producerTargets.generation,
+                         tracking: renderTracking, renderPose: renderPose, on: commandBuffer)) {
                 transferCount &+= 1
                 if LaunchDiagnostics.enabled {
                     let now = CACurrentMediaTime()
@@ -685,31 +798,7 @@ private final class WindowsVRCompositorRenderer {
                     }
                     lastTransferTime = now
                 }
-                // Read + write bytes for two four-channel 8-bit eye copies; no CPU readback.
                 transferBytes &+= UInt64(leftSource.width * leftSource.height + rightSource.width * rightSource.height) * 8
-            }
-        }
-
-        if matchesTarget {
-            if !transferred, let readyEvent { commandBuffer.encodeWaitForEvent(readyEvent, value: acquired.producerReadyValue) }
-            for index in targets.indices {
-                guard let source = sources[index] else { continue }
-                let target = targets[index]
-                // Opaque color and valid reverse-Z depth must be written together.
-                // Without guest depth, present on a finite projection plane, as a
-                // streaming VR client does. Zero-depth pixels represent no surface.
-                // Clear in the drawing pass, keeping tiles resident instead of
-                // storing and reloading color/depth in an empty pass first.
-                // A shared attachment is cleared only by its first eye.
-                let previousTargets = targets.prefix(index)
-                let clearColor = !previousTargets.contains { $0.texture === target.texture && $0.slice == target.slice }
-                let clearDepth = !previousTargets.contains { $0.depthTexture === target.depthTexture && $0.slice == target.slice }
-                if let depth = presentationDepth(projection: (index == 0 ? projections.0 : projections.1).projection, range: drawable.depthRange),
-                   encodeSpatialUpscale(source, to: target, depth: depth, reprojection: reprojection(for: drawable, viewIndex: index, renderPose: renderPose, projection: index == 0 ? projections.0 : projections.1), clearColor: clearColor, clearDepth: clearDepth, on: commandBuffer) {
-                    continue
-                }
-                clear(target, clearColor: clearColor, clearDepth: clearDepth, on: commandBuffer)
-                Self.log.error("Unable to encode opaque color and valid presentation depth for eye \(index)")
             }
             if diagnoseThisFrame && LaunchDiagnostics.frameCaptureEnabled {
                 if hasFrame, let source = sources[0] { encodeFrameProbe(source, label: "frame", on: commandBuffer) }
@@ -717,8 +806,8 @@ private final class WindowsVRCompositorRenderer {
                 // redrawn from the cached snapshot ("snapshot"). Most presented frames are the latter, because the guest
                 // submits at a lower rate than the display refreshes.
                 let target = targets[0]
-                encodeFrameProbe(EyeSource(texture: target.texture, slice: target.slice, x: target.originX, y: target.originY,
-                                           width: Int(target.width), height: Int(target.height)),
+                encodeFrameProbe(EyeSource(texture: target.texture, slice: target.slice, x: target.rateMap == nil ? target.originX : 0, y: target.rateMap == nil ? target.originY : 0,
+                                           width: target.rateMap == nil ? Int(target.width) : target.texture.width, height: target.rateMap == nil ? Int(target.height) : target.texture.height),
                                  label: hasFrame ? "drawable" : "snapshot", on: commandBuffer)
             }
         } else {
@@ -729,26 +818,20 @@ private final class WindowsVRCompositorRenderer {
             }
         }
 
-        if isNewGuestFrame && matchesTarget && !transferred, let leftSource, let rightSource {
-            _ = cacheEyes([leftSource, rightSource], generation: producerTargets.generation, tracking: renderTracking, renderPose: renderPose, on: commandBuffer)
+        if hasFrame, let lease = acquired.lease, let reconstructionContext {
+            _ = wvr_reconstruction_validate_v1(reconstructionContext, lease, Unmanaged.passUnretained(commandBuffer as AnyObject).toOpaque())
         }
         drawable.encodePresent(commandBuffer: commandBuffer)
-        // Keep producer images alive until their last GPU read: the owned
-        // copy on the fast path, or presentation on the allocation-failure fallback.
         let leaseAddress = acquired.lease.map { UInt(bitPattern: $0) }
         commandBuffer.addCompletedHandler { completed in
             if let error = completed.error {
                 Self.log.error("Presentation GPU command failed: \(String(describing: error), privacy: .public)")
                 LaunchLogFile.append("compositor", "Presentation GPU command failed: \(error)")
             }
-        }
-        if let leaseAddress {
-            leaseCompletionBuffer.addCompletedHandler { _ in
+            if let leaseAddress {
                 wvr_compositor_release_acquired_frame_v1(UnsafeMutableRawPointer(bitPattern: leaseAddress))
             }
         }
-        // Both buffers must be committed in order after installing callbacks.
-        if transferred { leaseCompletionBuffer.commit() }
         commandBuffer.commit()
         if LaunchDiagnostics.enabled && consumeGuestFrame {
             presentationCount &+= 1
@@ -877,6 +960,7 @@ private final class WindowsVRCompositorRenderer {
         else { return nil }
 
         let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.inputPrimitiveTopology = .triangle
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = format
@@ -888,74 +972,74 @@ private final class WindowsVRCompositorRenderer {
         return pipeline
     }
 
-    private func encodeSpatialUpscale(
-        _ source: EyeSource,
-        to target: EyeTarget,
-        depth: Float,
-        reprojection: simd_float4x4,
-        clearColor: Bool,
-        clearDepth: Bool,
-        on commandBuffer: any MTLCommandBuffer
-    ) -> Bool {
-        let isArray = source.texture.textureType == .type2DArray
-        guard source.width > 0, source.height > 0,
-              let pipeline = spatialPipeline(for: target.texture.pixelFormat, depthFormat: target.depthTexture.pixelFormat, sourceIsArray: isArray),
-              let spatialSampler,
-              let presentationDepthState,
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: {
-                  let pass = MTLRenderPassDescriptor()
-                  let attachment = pass.colorAttachments[0]
-                  attachment?.texture = target.texture
-                  attachment?.slice = target.slice
-                  attachment?.level = 0
-                  attachment?.loadAction = clearColor ? .clear : .load
-                  attachment?.clearColor = MTLClearColorMake(0, 0, 0, 1)
-                  attachment?.storeAction = .store
-                  pass.depthAttachment.texture = target.depthTexture
-                  pass.depthAttachment.slice = target.slice
-                  pass.depthAttachment.loadAction = clearDepth ? .clear : .load
-                  pass.depthAttachment.clearDepth = 0
-                  pass.depthAttachment.storeAction = .store
-                  return pass
-              }())
-        else { return false }
-
-        encoder.setRenderPipelineState(pipeline)
-        encoder.setDepthStencilState(presentationDepthState)
-        encoder.setViewport(MTLViewport(
-            originX: Double(target.originX),
-            originY: Double(target.originY),
-            width: Double(target.width),
-            height: Double(target.height),
-            znear: 0.0,
-            zfar: 1.0
-        ))
-        encoder.setFragmentTexture(source.texture, index: 0)
-        encoder.setFragmentSamplerState(spatialSampler, index: 0)
-        var region = WVRSpatialSourceUniform(
-            origin: SIMD2<Float>(Float(source.x), Float(source.y)),
-            extent: SIMD2<Float>(Float(source.width), Float(source.height)),
-            slice: UInt32(source.slice), padding: 0, presentationDepth: depth, reserved: 0, sourceFromDestinationClip: reprojection)
-        withUnsafeBytes(of: &region) { bytes in
-            encoder.setVertexBytes(bytes.baseAddress!, length: bytes.count, index: 0)
-            encoder.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 0)
+    private func encodeSpatialPresentations(_ plans: [SpatialEyePlan], on commandBuffer: any MTLCommandBuffer) -> Bool {
+        guard let spatialSampler, let presentationDepthState else { return false }
+        guard plans.count <= 2 else { return false }
+        var remaining = (UInt(1) << plans.count) - 1
+        while remaining != 0 {
+            let first = remaining.trailingZeroBitCount
+            let target = plans[first].target
+            let layered = (target.rateMap?.layerCount ?? 0) > 1
+            let group = WindowsVRPresentationGroups.next(remaining: remaining, count: plans.count) { _, index in
+                let other = plans[index].target
+                return other.texture === target.texture && other.depthTexture === target.depthTexture &&
+                    other.rateMap === target.rateMap && (layered || other.slice == target.slice)
+            }
+            let pass = MTLRenderPassDescriptor()
+            pass.rasterizationRateMap = target.rateMap
+            pass.renderTargetArrayLength = layered ? target.rateMap!.layerCount : 1
+            pass.colorAttachments[0].texture = target.texture
+            pass.colorAttachments[0].slice = layered ? 0 : target.slice
+            pass.colorAttachments[0].loadAction = .clear
+            pass.colorAttachments[0].storeAction = .store
+            pass.colorAttachments[0].clearColor = MTLClearColorMake(0,0,0,1)
+            pass.depthAttachment.texture = target.depthTexture
+            pass.depthAttachment.slice = layered ? 0 : target.slice
+            pass.depthAttachment.loadAction = .clear
+            pass.depthAttachment.storeAction = .store
+            pass.depthAttachment.clearDepth = 0
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return false }
+            encoder.setDepthStencilState(presentationDepthState)
+            for index in plans.indices where group & (1 << index) != 0 {
+                let plan = plans[index], source = plan.source, target = plan.target
+                guard let pipeline = spatialPipeline(for: target.texture.pixelFormat, depthFormat: target.depthTexture.pixelFormat,
+                                                     sourceIsArray: source.texture.textureType == .type2DArray) else {
+                    encoder.endEncoding(); return false
+                }
+                encoder.setRenderPipelineState(pipeline)
+                encoder.setViewport(MTLViewport(originX: Double(target.originX), originY: Double(target.originY),
+                    width: Double(target.width), height: Double(target.height), znear: 0, zfar: 1))
+                encoder.setFragmentTexture(source.texture, index: 0)
+                encoder.setFragmentSamplerState(spatialSampler, index: 0)
+                var region = WVRSpatialSourceUniform(origin: SIMD2<Float>(Float(source.x),Float(source.y)),
+                    extent: SIMD2<Float>(Float(source.width),Float(source.height)), slice: UInt32(source.slice),
+                    padding: UInt32(layered ? target.slice : 0), presentationDepth: plan.depth, reserved: 0,
+                    sourceFromDestinationClip: plan.reprojection)
+                withUnsafeBytes(of: &region) { bytes in
+                    encoder.setVertexBytes(bytes.baseAddress!, length: bytes.count, index: 0)
+                    encoder.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 0)
+                }
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            }
+            encoder.endEncoding()
+            remaining &= ~group
         }
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        encoder.endEncoding()
         return true
     }
 
     private func clear(_ target: EyeTarget, clearColor: Bool = true, clearDepth: Bool = true, on commandBuffer: any MTLCommandBuffer) {
         let descriptor = MTLRenderPassDescriptor()
+        descriptor.rasterizationRateMap = target.rateMap
+        descriptor.renderTargetArrayLength = (target.rateMap?.layerCount ?? 0) > 1 ? target.rateMap!.layerCount : 1
         let attachment = descriptor.colorAttachments[0]
         attachment?.texture = target.texture
-        attachment?.slice = target.slice
+        attachment?.slice = (target.rateMap?.layerCount ?? 0) > 1 ? 0 : target.slice
         attachment?.level = 0
         attachment?.loadAction = clearColor ? .clear : .load
         attachment?.storeAction = .store
         attachment?.clearColor = MTLClearColorMake(0, 0, 0, 1)
         descriptor.depthAttachment.texture = target.depthTexture
-        descriptor.depthAttachment.slice = target.slice
+        descriptor.depthAttachment.slice = (target.rateMap?.layerCount ?? 0) > 1 ? 0 : target.slice
         descriptor.depthAttachment.loadAction = clearDepth ? .clear : .load
         descriptor.depthAttachment.storeAction = .store
         descriptor.depthAttachment.clearDepth = 0
@@ -999,6 +1083,7 @@ private final class WindowsVRCompositorRenderer {
 private struct EyeTarget {
     let texture: any MTLTexture
     let depthTexture: any MTLTexture
+    let rateMap: (any MTLRasterizationRateMap)?
     let slice: Int
     let originX: Int
     let originY: Int
@@ -1025,4 +1110,11 @@ private struct WVRSpatialSourceUniform {
     var presentationDepth: Float
     var reserved: Float
     var sourceFromDestinationClip: simd_float4x4
+}
+
+private struct SpatialEyePlan {
+    let source: EyeSource
+    let target: EyeTarget
+    let depth: Float
+    let reprojection: simd_float4x4
 }

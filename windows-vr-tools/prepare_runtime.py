@@ -52,6 +52,7 @@ def project_patch_hashes():
         "windows-vr-openxr/include/WindowsVRWMTBridge.h",
         "windows-vr-openxr/include/WindowsVRHandles.h",
         "windows-vr-native/include/WindowsVRCompositorBridge.h",
+        "windows-vr-native/include/WindowsVRGuestFoveation.h",
         "windows-vr-ngx/src/WVRMetalFXWMTBridge.h",
         "windows-vr-ngx/src/WVRMetalFXWMTBridge.inc",
         "windows-vr-ngx/include/WindowsVRNGX.h",
@@ -270,6 +271,8 @@ def main():
         (ROOT / "windows-vr-openxr/include/WindowsVRWMTBridge.h", "src/winemetal/WindowsVRWMTBridge.h"),
         (ROOT / "windows-vr-native/include/WindowsVRCompositorBridge.h", "src/winemetal/WindowsVRCompositorBridge.h"),
         (ROOT / "windows-vr-native/include/WindowsVRCompositorBridge.h", "src/winemetal/unix/WindowsVRCompositorBridge.h"),
+        (ROOT / "windows-vr-native/include/WindowsVRGuestFoveation.h", "src/winemetal/WindowsVRGuestFoveation.h"),
+        (ROOT / "windows-vr-native/include/WindowsVRGuestFoveation.h", "src/winemetal/unix/WindowsVRGuestFoveation.h"),
     ]
     for original, relative_destination in transport_headers:
         destination = output / "dxmt" / relative_destination

@@ -107,6 +107,7 @@ def main():
                                       *sorted((root / 'windows-vr-native/Sources').glob('*.mm')),
                                       '-framework', 'Foundation', '-framework', 'Metal',
                                       '-framework', 'AVFAudio', '-framework', 'CoreFoundation',
+                                      '-framework', 'QuartzCore',
                                       '-o', build / 'libWindowsVRNativeBridge.dylib'])
     else:
         skip('metal-visionos', '--skip-visionos-build specified')

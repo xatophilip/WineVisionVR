@@ -90,3 +90,11 @@ PYX86
     --extra-file "$APP/WindowsVR/Guest/x86/OpenComposite/bin/vrclient.dll" \
     --extra-file "$APP/WindowsVR/Guest/x86/wvr_openxr.dll"
 fi
+
+if [[ -d "$APP/WindowsVR/Guest/arm64ec" ]]; then
+  python3 "$(dirname "$0")/stage_arm64ec_guest.py" --output "$APP/WindowsVR/Guest/arm64ec" --verify
+fi
+
+if [[ -d "$APP/WindowsVR/CacheTools" ]]; then
+  python3 "$(dirname "$0")/stage_fex_cache.py" --verify --output "$APP/WindowsVR/CacheTools" --runtime "$APP/Runtime"
+fi

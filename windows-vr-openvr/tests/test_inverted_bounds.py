@@ -46,6 +46,8 @@ struct Compositor {
  virtual bool InvertBoundsInCompositor(const vr::VRTextureBounds_t*) const;
  void Invoke(const vr::Texture_t*,const vr::VRTextureBounds_t*,XrSwapchainSubImage&,std::optional<XruEye>,vr::EVRSubmitFlags);
  bool CalculateViewport(const vr::VRTextureBounds_t*,int32_t,int32_t,bool,XrRect2Di&);
+ bool depthValid=false;unsigned depthCopies=0;
+ void CopyDepth(const vr::Texture_t*,const vr::VRTextureBounds_t*,std::optional<XruEye>,vr::EVRSubmitFlags){++depthCopies;}
  bool copiedBounds=false; const vr::VRTextureBounds_t* copied=nullptr;
  void CopyToSwapchain(const vr::Texture_t*,const vr::VRTextureBounds_t* b,std::optional<XruEye>,vr::EVRSubmitFlags){copiedBounds=b!=nullptr;copied=b;}
  int GetSwapChain(){return 1;}
@@ -65,6 +67,7 @@ code += '''int main(){
   assert(uv.originX==eye*.5f&&uv.originY==1&&uv.extentX==.5f&&uv.extentY==-1);
   DX11Compositor c;XrSwapchainSubImage image{};c.Invoke(nullptr,&b,image,eye,vr::Submit_Default);
   assert(c.copiedBounds&&image.imageRect.offset.x==0&&image.imageRect.offset.y==0);
+  assert(c.depthCopies==1&&!c.depthValid);
   assert(image.imageRect.extent.width==1920&&image.imageRect.extent.height==1792);
   Compositor old;XrRect2Di negative{};old.CalculateViewport(&b,3840,1792,true,negative);
   assert(negative.extent.height==-1792); // Exact observed failure, negative control.

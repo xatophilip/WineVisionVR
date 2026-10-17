@@ -16,13 +16,21 @@ import os
 enum OpenXRRegistration {
     private static let log = Logger(subsystem: "org.avpplay.windows-vr", category: "openxr-registry")
     enum Architecture: String {
-        case x86, x64
+        case x86, x64, arm64ec
 
         var sectionName: String {
             self == .x86 ? #"Software\\Wow6432Node\\Khronos\\OpenXR\\1"# : #"Software\\Khronos\\OpenXR\\1"#
         }
         var guestFolder: String { "C:\\windows-vr-runtime\\active\\" + rawValue }
         var clientName: String { self == .x86 ? "vrclient.dll" : "vrclient_x64.dll" }
+    }
+
+    /// Select the plugin's native 64-bit guest package without accepting arbitrary paths.
+    static func install(prefix: URL, architecture: String) throws {
+        guard let architecture = Architecture(rawValue: architecture) else {
+            throw RegistrationFailure.runtimeMissing
+        }
+        try install(prefix: prefix, architecture: architecture)
     }
 
     /// Call before the runtime starts: the registry file is only read when the Wine server starts.

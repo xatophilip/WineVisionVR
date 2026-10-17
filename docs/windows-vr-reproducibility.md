@@ -117,8 +117,12 @@ export AVPPLAY_LLVM_TOOLCHAINS_ROOT="$WVR_WORK/llvm-toolchains"
 bash windows-vr-tools/assemble_runtime.sh
 ```
 
-The assembler builds Debug, stages runtime/guest resources with matching receipts
-and builds the app. The current generic spec uses
+The assembler builds Debug, stages runtime/guest resources with matching receipts,
+and builds the app. For the modern profile it also compiles the matching source
+AIR writer into `$AVPPLAY_BUILD_ROOT/air-writer` and generates the app using
+`project.source-air.yml`; legacy/x86 profiles use the compatibility fallback in
+`project.yml`. The source AIR archive is generated from the patched DXMT and
+locked visionOS LLVM libraries and is not a retained external binary. The current generic spec uses
 `org.avpplay.visionos-windows-vr`; an existing installation with a different bundle
 ID has separate data, games and sign-in. For your own ID, benchmark diagnostics
 or a Release development build, use an ignored local override after assembly:
@@ -131,7 +135,7 @@ root = pathlib.Path('visionos-windows-vr')
 entitlements = plistlib.loads((root/'Resources/VisionOSWindowsVR.entitlements').read_bytes())
 entitlements['get-task-allow'] = True
 (root/'.local.development.entitlements').write_bytes(plistlib.dumps(entitlements))
-spec = {'include': ['project.benchmark.yml'], 'targets': {'VisionOSWindowsVR': {
+spec = {'include': ['project.benchmark.yml', 'project.source-air.yml'], 'targets': {'VisionOSWindowsVR': {
     'settings': {'base': {
         'PRODUCT_BUNDLE_IDENTIFIER': os.environ['WVR_BUNDLE_IDENTIFIER'],
         'DEVELOPMENT_TEAM': os.environ['AVPPLAY_DEVELOPMENT_TEAM'],
@@ -140,6 +144,7 @@ spec = {'include': ['project.benchmark.yml'], 'targets': {'VisionOSWindowsVR': {
 PY
 # Assembly prepared the modern overlay; manual generation must select that overlay.
 export AVPPLAY_RUNTIME_SOURCE="$AVPPLAY_D3D12_PROFILE_SOURCE"
+export AVPPLAY_AIR_OUTPUT="$AVPPLAY_BUILD_ROOT/air-writer"
 export AVPPLAY_DXMT_LINK_FLAG="-Wl,-force_load,\"$AVPPLAY_RUNTIME_SOURCE/app/Madeira/libdxmt_d3d12_combined.a\""
 xcodegen generate --spec visionos-windows-vr/.local.development.yml \
   --project visionos-windows-vr

@@ -21,3 +21,7 @@ void winios_post_key(int virtual_key, int down);
 unsigned long long winios_surface_present_count(void);
 #import "Steam/SwiftSteam/lzma_shim.h"
 #import "../../windows-vr-native/include/WindowsVRAudioSession.h"
+
+#import "../../windows-vr-native/include/WindowsVRReconstruction.h"
+
+#import "../../windows-vr-native/include/WindowsVRFrameSynthesis.h"

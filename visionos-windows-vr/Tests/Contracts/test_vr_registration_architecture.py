@@ -2,6 +2,7 @@
 """Execute production Swift registration while switching real Wine registry views."""
 from pathlib import Path
 import argparse
+import re
 import subprocess
 import tempfile
 
@@ -12,7 +13,11 @@ args = parser.parse_args()
 args.build.mkdir(parents=True, exist_ok=True)
 source = (root / 'Sources/Steam/OpenXRRegistration.swift').read_text()
 launcher = (root / 'Sources/LauncherModel.swift').read_text()
-assert 'OpenXRRegistration.install(prefix: MadeiraDock.prefix, architecture: launchManifest.guestArchitecture == .x86 ? .x86 : .x64)' in launcher
+# Execute the production launch-registration block with small manifest/runtime
+# stand-ins, so native guest selection is tested rather than assuming x64.
+match = re.search(r'            if launchManifest.id == "steam.shared" && launchManifest.presentation == \.immersiveVR \{\n.*?^            \}', launcher, re.M | re.S)
+assert match, "Steam immersive registration must remain scoped to VR launches"
+launch_registration = match.group(0)
 probe = r'''
 var serverRunning: Int32 = 0
 func wineserver_is_running() -> Int32 { serverRunning }
@@ -27,7 +32,7 @@ let key64 = #"Software\\Khronos\\OpenXR\\1"#
 let key32 = #"Software\\Wow6432Node\\Khronos\\OpenXR\\1"#
 let initial = "WINE REGISTRY Version 2\n\n[" + key64 + "] 1\n\"ActiveRuntime\"=\"C:\\\\old64.json\"\n\"Other64\"=dword:0000002a\n\n[Unrelated] 1\n\"Sentinel\"=\"keep\"\n\n[" + key32 + "] 1\n\"ActiveRuntime\"=\"C:\\\\old32.json\"\n\n"
 try initial.write(to: system, atomically: true, encoding: .utf8)
-for (abi, client, marker) in [("x86", "vrclient.dll", UInt8(32)), ("x64", "vrclient_x64.dll", UInt8(64))] {
+for (abi, client, marker) in [("x86", "vrclient.dll", UInt8(32)), ("x64", "vrclient_x64.dll", UInt8(64)), ("arm64ec", "vrclient_x64.dll", UInt8(100))] {
     let guest = resources.appendingPathComponent("WindowsVR/Guest/" + abi)
     try fm.createDirectory(at: guest.appendingPathComponent("OpenComposite/bin"), withIntermediateDirectories: true)
     try Data([marker]).write(to: guest.appendingPathComponent("wvr_openxr.dll"))
@@ -76,6 +81,25 @@ let unrelated = try registrySection("Unrelated")
 assert(unrelated.contains("Sentinel") && unrelated.contains("keep"))
 let retained32 = try Data(contentsOf: prefix.appendingPathComponent("drive_c/windows-vr-runtime/active/x86/wvr_openxr.dll"))
 assert(retained32 == Data([32]))
+// Exercise the actual launcher block: native ARM64EC for 64-bit apps,
+// explicit x86 precedence, x64 fallback, and no VR mutation for desktop apps.
+try registerFromLauncher(architecture: .x64, native: "arm64ec", presentation: .immersiveVR)
+try verify("arm64ec", "vrclient_x64.dll", 100)
+let native32 = try registrySection(key32)
+assert(native32 == section32)
+try registerFromLauncher(architecture: .x86, native: "arm64ec", presentation: .immersiveVR)
+try verify("x86", "vrclient.dll", 32)
+let preservedNative64 = try registrySection(key64)
+assert(preservedNative64.contains(#""ActiveRuntime"="C:\\windows-vr-runtime\\active\\arm64ec\\runtime.json""#))
+let desktopRegistry = try Data(contentsOf: system)
+let desktopPaths = try Data(contentsOf: pathRegistry)
+try registerFromLauncher(architecture: .x64, native: "x64", presentation: .desktop)
+let afterDesktopRegistry = try Data(contentsOf: system)
+let afterDesktopPaths = try Data(contentsOf: pathRegistry)
+assert(afterDesktopRegistry == desktopRegistry)
+assert(afterDesktopPaths == desktopPaths)
+try registerFromLauncher(architecture: nil, native: nil, presentation: .immersiveVR)
+try verify("x64", "vrclient_x64.dll", 64)
 // Never rewrite files while the prefix's server is running.
 serverRunning = 1
 let beforeRejected = try Data(contentsOf: system)
@@ -85,8 +109,20 @@ do {
 } catch {}
 let afterRejected = try Data(contentsOf: system)
 assert(beforeRejected == afterRejected)
-print("PASS: real Swift x86/x64 registry views, matching runtime/bridge paths, repeat installation, other-view/config preservation and active-server rejection")
+print("PASS: real Swift x86/x64/ARM64EC registration, production launcher native selection/x86 precedence/x64 fallback/desktop isolation, registry-view/config preservation, repeat installation and active-server rejection")
 '''
+# The extracted launch code uses the same names as the production entry point.
+# Native runtime architecture is a reported plugin capability, not a game path.
+probe = r'''
+enum TestArchitecture { case x86, x64 }
+enum TestPresentation { case desktop, immersiveVR }
+struct TestManifest { let id = "steam.shared"; let guestArchitecture: TestArchitecture?; let presentation: TestPresentation }
+struct TestRuntime { let guestRuntimeArchitecture: String? }
+enum MadeiraDock { static var prefix: URL { Bundle.main.resourceURL!.appendingPathComponent("registry-prefix") } }
+func registerFromLauncher(architecture: TestArchitecture?, native: String?, presentation: TestPresentation) throws {
+    let launchManifest = TestManifest(guestArchitecture: architecture, presentation: presentation)
+    let runtime = TestRuntime(guestRuntimeArchitecture: native)
+''' + launch_registration + "\n}\n" + probe
 with tempfile.TemporaryDirectory(prefix='vr-registration-', dir=args.build) as work:
     work = Path(work)
     (work / 'main.swift').write_text(source + '\n' + probe)

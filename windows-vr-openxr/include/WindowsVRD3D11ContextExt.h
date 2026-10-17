@@ -113,9 +113,22 @@ struct __declspec(uuid("d9e15e9c-7c99-4b09-8dd8-628d3cf004a7")) IMTLD3D11Context
   virtual HRESULT STDMETHODCALLTYPE SubmitWindowsVRFrameV2(const WVRDXMTSubmitFrameV2 *frame) = 0;
 };
 
+// Optional explicit depth submission; published Ext2/Ext3 vtables stay frozen.
+#include "WindowsVRReconstruction.h"
+inline constexpr GUID kWVRD3D11ContextExt4IID = {0x794f57f1,0x7369,0x4f63,{0xa1,0x2d,0x60,0x43,0x91,0x02,0x7a,0x18}};
+struct WVRDXMTDepthFrameV1 {
+  WVRDXMTSubmitFrameV2 color;
+  ID3D11Resource *depth[2];
+  WVRReconstructionEyeV1 geometry[2];
+};
+struct __declspec(uuid("794f57f1-7369-4f63-a12d-604391027a18")) IMTLD3D11ContextExt4 : public IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE SubmitWindowsVRDepthFrame(const WVRDXMTDepthFrameV1 *frame) = 0;
+};
+
 // MinGW's i386 ABI implements __uuidof through template specializations.
 // Clang's uuid attribute alone is ignored on that target.
 #ifdef __CRT_UUID_DECL
 __CRT_UUID_DECL(IMTLD3D11ContextExt2, 0xbc8694b6, 0xa18f, 0x48d8, 0xbc, 0xe1, 0x90, 0xda, 0x0b, 0x6b, 0x7f, 0x42)
+__CRT_UUID_DECL(IMTLD3D11ContextExt4, 0x794f57f1, 0x7369, 0x4f63, 0xa1, 0x2d, 0x60, 0x43, 0x91, 0x02, 0x7a, 0x18)
 __CRT_UUID_DECL(IMTLD3D11ContextExt3, 0xd9e15e9c, 0x7c99, 0x4b09, 0x8d, 0xd8, 0x62, 0x8d, 0x3c, 0xf0, 0x04, 0xa7)
 #endif

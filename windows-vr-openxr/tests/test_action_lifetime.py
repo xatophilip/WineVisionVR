@@ -19,6 +19,7 @@ def function(signature):
 preamble = r'''
 #include <openxr/openxr.h>
 #include "WindowsVRHandles.h"
+#include "WindowsVRActionPlan.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -32,16 +33,16 @@ preamble = r'''
 constexpr uint32_t kControllerLeft=0,kControllerRight=1;
 constexpr uint64_t kMagicSpace=1,kMagicAction=2,kMagicActionSet=3;
 struct Instance;struct Action;struct ActionSet;
-struct Session {Instance* instance;std::recursive_mutex actionMutex;std::mutex localOriginMutex;bool localOriginValid=false,actionSetsAttached=true;XrPosef localOrigin{};std::vector<XrActionSet> activeActionSets;std::unordered_map<XrActionSet,uint32_t> activeSetSubactions;};
+struct WVRDXMTControllerV1 {uint32_t flags=7;uint64_t timestampNanoseconds=0;float originFromController[16]{};};
+struct Session {struct {WVRDXMTControllerV1 left{},right{};}controllers;Instance* instance;std::recursive_mutex actionMutex;std::mutex localOriginMutex;bool localOriginValid=false,actionSetsAttached=true;XrPosef localOrigin{};std::vector<XrActionSet> activeActionSets;std::unordered_map<XrActionSet,uint32_t> activeSetSubactions;};
 struct Space {uint64_t magic=kMagicSpace;Session* session;XrAction action=XR_NULL_HANDLE;Action* actionResource=nullptr;XrPath subactionPath=XR_NULL_PATH;XrReferenceSpaceType type=XR_REFERENCE_SPACE_TYPE_STAGE;XrPosef poseInActionSpace{},poseInReferenceSpace{};};
 struct ActionSet {uint64_t magic=kMagicActionSet;Instance* instance;std::vector<XrAction> actions;};
-struct Action {uint64_t magic=kMagicAction;ActionSet* set;XrActionType type=XR_ACTION_TYPE_POSE_INPUT;std::vector<XrPath> subactionPaths,bindingPaths;};
+struct Action {uint64_t magic=kMagicAction;ActionSet* set;XrActionType type=XR_ACTION_TYPE_POSE_INPUT;std::vector<XrPath> subactionPaths,bindingPaths,plannedBindingPaths;WVRActionRolePlan rolePlans[2];};
 struct Instance {std::mutex mutex;std::unordered_map<std::string,XrPath> paths;std::unordered_map<XrPath,std::string> pathStrings;uint64_t nextPath=1;std::vector<std::unique_ptr<ActionSet>> actionSets;std::vector<std::unique_ptr<Action>> actions;std::unordered_map<XrPath,XrAction> bindings;std::unordered_map<XrPath,std::vector<XrActionSuggestedBinding>> profileBindings;};
 std::mutex g_mutex,g_handleMutex;
 std::unordered_set<const void*> g_liveHandles;
 std::vector<std::unique_ptr<Space>> g_spaces;
 Session* GetSession(XrSession h){return reinterpret_cast<Session*>(h);}
-struct WVRDXMTControllerV1 {uint32_t flags=7;float originFromController[16]{};};
 struct WVRDXMTTrackingV1 {uint32_t flags=1;float originFromDevice[16]{};};
 unsigned controllerReads=0;
 int GetSessionController(Session*,uint32_t role,WVRDXMTControllerV1* controller){++controllerReads;controller->originFromController[12]=float(role+1);return 0;}
@@ -55,7 +56,7 @@ functions = [function(signature) for signature in [
     'Space *GetSpace(', 'ActionSet *GetActionSet(', 'Action *GetAction(',
     'uint32_t RoleForPath(', 'XrPath UserPathForRole(', 'bool AnalogBinding(',
     'uint64_t ButtonForBinding(const std::string &binding) {',
-    'bool ActionAllowsRole(', 'bool ActionHasBindingForRole(', 'uint32_t ActionRole(',
+    'bool ActionAllowsRole(', 'void CompileActionBindings(', 'bool ActionHasBindingForRole(', 'uint32_t ActionRole(',
     'bool ActionSetIsActive(', 'bool ActionSetRoleIsActive(', 'bool OriginFromSpace(',
     'XrResult XRAPI_CALL CreateActionSpace(', 'XrResult XRAPI_CALL DestroySpace(',
     'void InvalidateActionHandle(', 'XrResult XRAPI_CALL DestroyActionSet(',
