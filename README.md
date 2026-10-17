@@ -30,13 +30,19 @@ Fantastic Contraption is very slow and has frozen/crashed; Google Earth VR and
 Audioshield remain unresolved. See the [local testing record](docs/windows-vr-local-testing.md#current-game-status--17-october-2026)
 for evidence and limitations.
 
+**Space Pirate Trainer also works**, user-confirmed on the current source-built
+update. Its earlier failures are superseded by this result; sustained FPS and
+long-session stability have not been measured.
+
 ### Upstream integration and fresh build, 17 October 2026
 
 Upstream changes through `76bf424` are merged with this fork. A fresh GitHub
 checkout built unsigned Debug and signed Release apps, with newly compiled native
 runtime components and documented external compiler/prefix inputs. The signed
-candidate passed package/signing checks and is installed; headset gameplay
-validation is still pending. See the [integration/build report](docs/windows-vr-upstream-integration.md)
+candidate passed package/signing checks and is installed. Space Pirate Trainer
+is user-confirmed working; Windlands reached a menu/game scene with the
+experimental FEX cache launcher disabled, which is now the app default. Further
+gameplay and stability checks remain. See the [integration/build report](docs/windows-vr-upstream-integration.md)
 and [rebuild instructions](docs/windows-vr-reproducibility.md). No new game FPS or
 Fantastic Contraption fix is claimed.
 

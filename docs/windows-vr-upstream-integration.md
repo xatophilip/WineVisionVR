@@ -148,3 +148,12 @@ Those are generated/prepared dependency paths: any repair must be implemented as
 a tracked preparation patch, rebuilt with matching receipts, and tested across
 launcher, Steam and game children. No such native change is represented by the
 current workaround.
+
+
+## Space Pirate Trainer confirmed
+
+On 17 October the user confirmed **Space Pirate Trainer (Steam 418650) works**
+on the installed source-built update, app UUID
+`772767BC-4724-3F1A-96DE-FDE41E4B334B` (source `84663b7`). The app defaults
+`FEX_ENABLECODECACHINGWIP=0`. This supersedes earlier Space Pirate Trainer failures
+for this build; no FPS or long-session stability measurement was supplied.

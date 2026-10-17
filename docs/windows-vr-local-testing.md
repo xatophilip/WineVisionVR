@@ -4,12 +4,14 @@
 
 The user reconfirmed **Windlands and Job Simulator both work** on 17 October
 2026, on the physical M2 Apple Vision Pro running visionOS 27.2 with PS VR2
-Sense controllers.
+Sense controllers. The user also confirmed **Space Pirate Trainer works** on
+the current source-built update.
 
 | Game | Latest confirmed result |
 |---|---|
 | Windlands (Steam 428370) | Working: a level starts and controller input works; user reports acceptable speed in the prior working build. |
 | Job Simulator (Steam 448280) | Working: user-confirmed gameplay and acceptable speed in the prior working build. |
+| Space Pirate Trainer (Steam 418650) | Working: user-confirmed on the current source-built update; FPS and long-session stability unmeasured. |
 | Fantastic Contraption (Steam 386690) | Unresolved: user reports very slow rendering when visible; prior attempts also froze/crashed. Not confirmed reliably playable. |
 | Google Earth VR (Steam 348250) | Unresolved: unsupported OpenGL rendering path. |
 | Audioshield | Unresolved: experimental 32-bit runtime and mixed-architecture launch limitations. |
@@ -17,7 +19,7 @@ Sense controllers.
 Working means user-confirmed gameplay on the tested setup; it does not establish
 long-session stability or a sustained FPS result. The earlier failures below
 are a chronological investigation record and do not supersede these latest
-Windlands and Job Simulator confirmations.
+Windlands, Job Simulator and Space Pirate Trainer confirmations.
 
 ## Fresh-source integration retest
 
@@ -29,6 +31,12 @@ or playable level, and logs showed guest-frame submissions continuing. The app
 now defaults this experimental launcher off, with explicit opt-in preserved.
 This is not yet a sustained stability/controller test or validation of the other
 games on the fresh runtime. See the [investigation](windows-vr-upstream-integration.md#subsequent-headset-regression-investigation).
+
+The user subsequently confirmed Space Pirate Trainer (418650) works on the
+installed source-built update, app UUID `772767BC-4724-3F1A-96DE-FDE41E4B334B`
+(source build `84663b7`), with the experimental FEX cache launcher disabled by
+default. This supersedes its earlier failed attempts for the current build.
+No measured FPS, exhaustive control test or long-session claim is implied.
 
 ## User-reported performance baseline before the upstream update
 
