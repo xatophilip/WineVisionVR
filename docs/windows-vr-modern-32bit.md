@@ -72,11 +72,9 @@ the separate app build covered those sources, legacy DXMT transport, a patched
 OpenComposite logger source, and simulator execution). Its packaging group ran
 64 tests with one case-sensitive-filesystem fixture skipped.
 
-Fresh modern native/guest compilation is in progress; real headset CPU, desktop
-and D3D11 rendering tests remain required. A device log-copy attempt on 17 October 2026
-failed CoreDevice error 4016 because the paired headset was unavailable; no new
-runtime result was inferred from that failure. Keep the working main app and
-its fallback build until the separate test app passes.
+Fresh modern native/guest compilation and signed app packaging have now completed.
+Real headset CPU, desktop and D3D11 rendering tests remain required. Keep the
+working main app and its fallback build until the separate test app passes.
 
 ## Repeat the host checks
 
@@ -113,7 +111,35 @@ unverified and is not advertised.
 
 A diagnostic build of the providers closed the real i386 dependency graph across
 719 binaries, with only the existing explicit unsupported Win16 forwarders.
-The updated offline suite passes 68 tests with one optional skip. A clean second
-modern profile build is required before packaging, because its build-script
-fingerprint changed. The first attempt is retained as a failed package build;
-its receipts are not edited to make it pass.
+The updated offline suite passes 68 tests with one optional skip. The clean second
+modern profile build completed native compilation, both translators, the i386
+Wine closure, four matching modern graphics DLLs and strict staging. The first
+attempt remains a failed package build; its receipts were not edited to pass.
+
+## Signed modern package and headset startup
+
+The complete modern Release app was signed and installed separately as
+`com.philipanderson.WineVisionVR.x86test` on 17 October 2026. Executable UUID:
+`230FDB6F-D27A-361C-BB08-ADFA51EB4682`. It replaces the earlier composite test
+app, not the working main app. Bundle verification counted 100 ARM64EC, 137
+ARM64 and 721 i386 binaries and checked the real WOW64 ABI exports, dependency
+closure, development signing and JIT resources. The build reused the pinned
+compiler cache and the verified unchanged baseline, while rebuilding the modern
+profile and its native outputs from source.
+
+The authored VR fixture builder now honors `AVPPLAY_SOURCE_CACHE_ROOT` for
+OpenVR headers and records their hash. Both x64 and x86 fixtures compiled using
+the external source cache; no untracked local header copy is required.
+
+Xcode activation timed out, but opening the separate app manually succeeded.
+Its startup log then reached debugger preparation and timed out after 90 seconds
+without debugger attachment. StikDebug received the exact test bundle ID, live
+PID and embedded script, but its tunnel remained disconnected while trying
+addresses discovered before a Wi-Fi change. No runtime log or fresh Windows
+self-test PASS was produced. This is a JIT prerequisite failure, not evidence
+that a 32-bit Windows process executed or crashed. The transferred authored
+32-bit desktop self-test is ready for a retry once the tunnel reconnects.
+
+Local build, signing, install and diagnostic records are retained under the
+external `x86-modern-oct17-r2` build directory. Pairing credentials and device
+logs are deliberately excluded from Git.

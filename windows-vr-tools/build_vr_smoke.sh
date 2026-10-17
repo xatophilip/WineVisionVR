@@ -11,16 +11,18 @@ case "$ARCH" in
 esac
 COMPILER="$AVPPLAY_LLVM_MINGW_ROOT/bin/$TRIPLE-clang"
 SOURCE="$ROOT/visionos-windows-vr/Examples/vr-smoke"
+OPENVR_HEADERS="${AVPPLAY_SOURCE_CACHE_ROOT:-$ROOT/third-party}/openvr/headers"
+[[ -s "$OPENVR_HEADERS/openvr_capi.h" ]] || { echo "Missing pinned OpenVR C API header: $OPENVR_HEADERS/openvr_capi.h" >&2; exit 1; }
 OUTPUT="${AVPPLAY_VR_SMOKE_OUTPUT:-$ROOT/visionos-windows-vr/Resources/$RESOURCE_NAME}"
 [[ -x "$COMPILER" ]] || { echo "Missing pinned compiler: $COMPILER" >&2; exit 1; }
 mkdir -p "$OUTPUT"
 "$COMPILER" -O2 -Wall -Wextra -Werror -municode -mwindows \
-    -isystem "$ROOT/third-party/openvr/headers" "$SOURCE/main.c" \
+    -isystem "$OPENVR_HEADERS" "$SOURCE/main.c" \
     -o "$OUTPUT/vr-smoke.exe" -ld3d11 -ld3dcompiler -luser32 -ladvapi32
 cp "$SOURCE/manifest.json" "$OUTPUT/manifest.json"
-python3 - "$SOURCE" "$OUTPUT" "$ROOT" "$AVPPLAY_LLVM_MINGW_ROOT" "$ARCH" "$TRIPLE" <<'PY'
+python3 - "$SOURCE" "$OUTPUT" "$OPENVR_HEADERS" "$AVPPLAY_LLVM_MINGW_ROOT" "$ARCH" "$TRIPLE" <<'PY'
 import hashlib,json,pathlib,struct,subprocess,sys
-source,output,root,toolchain=map(pathlib.Path,sys.argv[1:5])
+source,output,headers,toolchain=map(pathlib.Path,sys.argv[1:5])
 architecture,triple=sys.argv[5:7]
 manifest=json.loads((source/'manifest.json').read_text())
 if architecture=='x86':
@@ -34,6 +36,6 @@ inspection=subprocess.check_output([str(toolchain/'bin/llvm-readobj'),'--coff-im
 (output/'imports.txt').write_text(inspection)
 imports=[line.strip().split(': ',1)[1] for line in inspection.splitlines() if line.strip().startswith('Name: ')]
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-(output/'build.json').write_text(json.dumps({'target':triple,'architecture':architecture,'presentation':'immersiveVR','sourceSha256':sha(source/'main.c'),'manifestSha256':sha(output/'manifest.json'),'executableSha256':sha(output/'vr-smoke.exe'),'openvrHeaderSha256':sha(root/'third-party/openvr/headers/openvr_capi.h'),'compilerSha256':sha(toolchain/('bin/'+triple+'-clang')),'imports':imports,'executed':False},indent=2)+'\n')
+(output/'build.json').write_text(json.dumps({'target':triple,'architecture':architecture,'presentation':'immersiveVR','sourceSha256':sha(source/'main.c'),'manifestSha256':sha(output/'manifest.json'),'executableSha256':sha(output/'vr-smoke.exe'),'openvrHeaderSha256':sha(headers/'openvr_capi.h'),'compilerSha256':sha(toolchain/('bin/'+triple+'-clang')),'imports':imports,'executed':False},indent=2)+'\n')
 print(f'Built app-owned {architecture} VR test scene: {output / "vr-smoke.exe"}; not executed.')
 PY
