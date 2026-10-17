@@ -19,6 +19,17 @@ long-session stability or a sustained FPS result. The earlier failures below
 are a chronological investigation record and do not supersede these latest
 Windlands and Job Simulator confirmations.
 
+## Fresh-source integration retest
+
+The first source-built upstream candidate regressed Windlands startup: Steam
+reported successful launch but its game child faulted in Wine GDI before guest
+frames. A retry with `FEX_ENABLECODECACHINGWIP=0` bypassed the experimental cache
+launcher. After a loading/splash interval, the user explicitly confirmed a menu
+or playable level, and logs showed guest-frame submissions continuing. The app
+now defaults this experimental launcher off, with explicit opt-in preserved.
+This is not yet a sustained stability/controller test or validation of the other
+games on the fresh runtime. See the [investigation](windows-vr-upstream-integration.md#subsequent-headset-regression-investigation).
+
 ## User-reported performance baseline before the upstream update
 
 On 17 October the user reported that **Windlands and Job Simulator ran at

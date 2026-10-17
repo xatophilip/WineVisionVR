@@ -130,8 +130,11 @@ have matching font resources. Repeated FEX code-buffer mprotect warnings alone
 are not proof of the fatal cause.
 
 A diagnostic launch with `FEX_ENABLECODECACHINGWIP=0` bypasses the new cache
-launcher wrapper. The user then reported a Windlands splash screen and later
-progress; a menu/level confirmation and sustained session are separate gates.
+launcher wrapper. The user initially reported a Windlands splash screen, then explicitly confirmed
+a menu or playable level. The corresponding log progressed from 80 submitted
+guest frames during loading to 1,571, with ongoing submissions past the splash.
+This establishes progress on this diagnostic run; controller interaction and a
+sustained session remain separate checks.
 The application now leaves this experimental wrapper disabled by default while
 preserving explicit opt-in overrides. The package and native persistent-cache
 implementation remain available. This mitigation is not a claim that the deeper
