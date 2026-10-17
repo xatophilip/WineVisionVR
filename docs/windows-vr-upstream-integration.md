@@ -101,6 +101,8 @@ JIT, game compatibility or sustained game FPS.
 
 The candidate is installed; interactive gameplay validation is pending. The
 headset reports `passcodeRequired: true`, preventing that test until it is unlocked.
+An attempted `--vr-smoke-test` launch timed out after 20 seconds; no guest frame or
+gameplay success is inferred from installation alone.
 The final packaging/import test suite passed all **60 tests** after the app-build
 repairs. Start with
 the small VR smoke fixture, then use Windlands and Job Simulator as compatibility
