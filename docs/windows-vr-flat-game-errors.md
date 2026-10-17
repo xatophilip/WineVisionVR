@@ -34,5 +34,16 @@ the 32-bit runtime requirement.
 
 Only Tomb Raider I appears as a flat-game attempt in the captured recent session
 batch. Tilt Brush and Space Pirate Trainer entries in the same batch are VR cases
-and must be investigated separately. The background-download update remains built
-and held for installation at the user's request while these errors are reviewed.
+and must be investigated separately. After this review, the signed Release containing the selection repair, background
+transfers and the disabled-by-default experimental cache launcher was installed
+and opened on the headset. Games and saved data were retained. The source build
+is `84663b7`; the app UUID is `772767BC-4724-3F1A-96DE-FDE41E4B334B`.
+
+Three targeted contracts passed: installed launch selection/path safety, queue
+handoff validation, and PE architecture inspection. The host volume is case
+insensitive, so a physical two-case-file ambiguity fixture was skipped; the
+production matching function was tested directly with ambiguous candidates.
+The signed visionOS build and bundle/profile checks also passed. A requested
+automatic Tomb Raider preflight reused an already-running app process, so it
+did not establish the new error behavior on the headset. Tomb Raider gameplay
+remains unvalidated and blocked by the known 32-bit requirement.
