@@ -23,6 +23,7 @@ manifest = (root / 'windows-vr/Sources/WindowsVRCore/WindowsGameManifest.swift')
 launch = source.split('    func launch(preparePresentation:', 1)[1].split('    func select', 1)[0]
 assert launch.index('restoreSteamSelection(for: manifest)') < launch.index('let launchManifest = try effectiveManifest()') < launch.index('runtime.preflight(')
 assert launch.count('restoreSteamSelection(') == 1
+assert launch.index('bundledX86RuntimeAvailable(') < launch.index('runtime.preflight(')
 assert 'guard let selection = launchSelection,' in launch.split('await SteamLibraryModel.shared.prepareForLaunch()', 1)[1]
 probe = r'''
 import Foundation
@@ -150,7 +151,20 @@ try check(try restored.restoredManifest(saved(nil)).guestArchitecture == .x86 &&
       "Missing remembered option must reconcile to the installed option before preflight")
 try check(try restored.restoredManifest(saved(.arm64ec, id: "direct.fixture")).guestArchitecture == .arm64ec,
       "Direct non-Steam manifests retain their own explicit architecture")
-print("PASS: actual PE architecture, path/header confinement, restored nil/stale/profile fields, reconciled launch option, and unchanged direct manifests")
+let resources = base.appendingPathComponent("resources")
+try check(!Probe.bundledX86RuntimeAvailable(resources: nil, immersiveVR: false), "No bundle cannot supply x86")
+try check(!Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: false), "Verified x64-only bundle must reject x86 child before old native plugin")
+let x86Files = ["Runtime/i386-windows/ntdll.dll", "WindowsVR/Guest/x86/wvr_openxr.dll", "WindowsVR/Guest/x86/OpenComposite/bin/vrclient.dll"]
+for (index, relative) in x86Files.enumerated() {
+    let file = resources.appendingPathComponent(relative)
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data([0x4d, 0x5a]).write(to: file)
+    try check(Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: false), "Desktop x86 requires its Wine farm")
+    try check(Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: true) == (index == 2), "Immersive x86 requires both architecture-matched bridge files")
+}
+try FileManager.default.removeItem(at: resources.appendingPathComponent(x86Files[0]))
+try check(!Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: true), "VR bridges cannot replace a missing x86 Wine farm")
+print("PASS: actual PE architecture, restored Steam/profile fields, option reconciliation, direct manifests and x86-only package guard")
 '''.replace('METHODS', methods).replace('PRODUCTIONMANIFEST', manifest).replace('ARCHBODY', methods).replace('RESTOREBODY', restore).replace('EFFECTIVEBODY', effective)
 unit = args.build / 'SteamArchitecture.swift'
 unit.write_text(probe)

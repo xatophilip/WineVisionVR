@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import AVFAudio
 import Observation
 import Metal
@@ -64,6 +65,10 @@ final class LauncherModel {
 
     @ObservationIgnored private let runtime = NativePluginWindowsRuntime()
     @ObservationIgnored private let jitCoordinator = JITCoordinator()
+    @ObservationIgnored private var sessionDiagnostics: SessionDiagnostics?
+    private var diagnosticsFailureReason: String?
+    private var diagnosticsAttemptActive = false
+    private var diagnosticsNativeState: Int32?
     private var gameDirectoryAccessURL: URL?
     private var immersiveSpaceIsOpen = false
     private var immersiveSpaceClosedDuringLaunch = false
@@ -71,6 +76,17 @@ final class LauncherModel {
     private var compilerFailureHandled = false
 
     init() {
+        // Recover the previous attempt before cleanup or a new launch can
+        // rotate its global runtime log.
+        if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            do {
+                let diagnostics = try SessionDiagnostics(documentsDirectory: documents)
+                try diagnostics.recoverPendingAttempt()
+                sessionDiagnostics = diagnostics
+            } catch {
+                launchLog.error("Test session recovery failed: \(error.localizedDescription)")
+            }
+        }
         MadeiraDock.cleanup()
         do {
             library = try WindowsVRLibraryStore.load()
@@ -577,6 +593,17 @@ final class LauncherModel {
             normalized.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
+    /// Older verified native plugins do not understand the architecture field.
+    /// Reject a missing x86 package before passing a Steam child to that plugin.
+    nonisolated static func bundledX86RuntimeAvailable(resources: URL?, immersiveVR: Bool) -> Bool {
+        guard let resources else { return false }
+        let files = ["Runtime/i386-windows/ntdll.dll"] + (immersiveVR
+            ? ["WindowsVR/Guest/x86/wvr_openxr.dll", "WindowsVR/Guest/x86/OpenComposite/bin/vrclient.dll"] : [])
+        return files.allSatisfy { path in
+            (try? resources.appendingPathComponent(path).resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        }
+    }
+
     func selectSteamGame(_ game: DockGame, launchOption: UInt32) {
         guard canChangeSelection else { return }
         do {
@@ -654,12 +681,13 @@ final class LauncherModel {
     private static func configureGraphicsEnvironment() {
         #if DEBUG
         if getenv("DXMT_LOG_LEVEL") == nil { setenv("DXMT_LOG_LEVEL", "info", 1) }
-        // Shader capture performs startup disk writes; opt in only when needed.
-        let capture = getenv("WVR_METAL_CAPTURE").map { String(cString: $0) == "1" } ?? false
-        wvr_metal_shader_compatibility_install(capture ? 1 : 0)
-        #else
-        wvr_metal_shader_compatibility_install(0)
         #endif
+        // Shader capture performs startup disk writes; normal play leaves it off.
+        // Locally enabled diagnostics may opt in even in a signed Release build.
+        let captureRequested = getenv("WVR_METAL_CAPTURE").map { String(cString: $0) == "1" } ?? false
+        let capture = LaunchDiagnostics.enabled && (captureRequested ||
+            ProcessInfo.processInfo.arguments.contains("--capture-metal-diagnostics"))
+        wvr_metal_shader_compatibility_install(capture ? 1 : 0)
     }
 
     private static func configureAudioEnvironment() throws {
@@ -699,12 +727,19 @@ final class LauncherModel {
             // Freeze the reconciled option alongside the manifest before any
             // async work can change the Steam library or remembered selection.
             let launchSelection = steamSelection
+            do { try beginTestSession() }
+            catch { launchLog.error("Test session archive could not start; launch will continue: \(error.localizedDescription)") }
             let launchManifest = try effectiveManifest()
             isLaunching = true
             immersiveSpaceClosedDuringLaunch = false
             launchError = nil
             defer { isLaunching = false }
             guard runtime.isAvailable else { throw LauncherFailure.runtimePluginMissing }
+            if launchManifest.guestArchitecture == .x86,
+               !Self.bundledX86RuntimeAvailable(resources: Bundle.main.resourceURL,
+                                               immersiveVR: launchManifest.presentation == .immersiveVR) {
+                throw DockError.message("This build does not contain the experimental 32-bit runtime required by this game.")
+            }
             try runtime.preflight(manifest: launchManifest, gameDirectory: gameDirectory)
             launchLog.notice("Launch: preflight passed, preparing debugger")
             try await jitCoordinator.prepareDebugger()
@@ -746,16 +781,18 @@ final class LauncherModel {
             Self.configureGraphicsEnvironment()
             try Self.configureAudioEnvironment()
             if launchManifest.id == "steam.shared" && launchManifest.presentation == .immersiveVR {
-                try OpenXRRegistration.install(prefix: MadeiraDock.prefix)
+                try OpenXRRegistration.install(prefix: MadeiraDock.prefix, architecture: launchManifest.guestArchitecture == .x86 ? .x86 : .x64)
             }
             try await runtime.launch(manifest: launchManifest, gameDirectory: gameDirectory)
             launchLog.notice("Launch: runtime accepted the launch")
             hasAcceptedLaunch = true
+            snapshotTestSession(reason: "Runtime accepted launch; game readiness and rendering unknown")
             if LaunchDiagnostics.enabled { watchGuestStartup() }
             runtimeStatus = L("Launch accepted; game readiness unknown", "Start wurde angenommen; Spielbereitschaft unbekannt")
             beginStatusMonitoring()
             if launchManifest.presentation == .immersiveVR && (!immersiveSpaceIsOpen || immersiveSpaceClosedDuringLaunch) {
                 try await runtime.stop()
+                finishTestSession(outcome: .stopped, reason: "Stop confirmed after immersive presentation closed during launch")
                 hasAcceptedLaunch = false
                 requiresRestart = true
                 statusMonitor?.cancel()
@@ -765,6 +802,11 @@ final class LauncherModel {
             }
         } catch {
             launchLog.error("Launch failed (accepted=\(self.hasAcceptedLaunch)): \(String(describing: error)); native=\(self.runtime.nativeStatus().lastError ?? "")")
+            if hasAcceptedLaunch {
+                noteTestSessionFailure("Launch preparation or stop failed while the native session remained active")
+            } else {
+                finishTestSession(outcome: .failed, reason: "Launch failed before runtime acceptance")
+            }
             if !hasAcceptedLaunch {
                 MadeiraDock.cleanup()
                 SteamLibraryModel.shared.resumeAfterLaunchFailure()
@@ -917,10 +959,12 @@ final class LauncherModel {
         immersiveSpaceIsOpen = false
         if isLaunching { immersiveSpaceClosedDuringLaunch = true }
         guard presentationModeDraft == .immersiveVR, hasAcceptedLaunch, !isStopping, !stopRequested else { return }
+        snapshotTestSession(reason: "Immersive presentation closed; requesting native stop")
         isStopping = true
         defer { isStopping = false }
         do {
             try await runtime.stop()
+            finishTestSession(outcome: .stopped, reason: "Native stop confirmed after immersive presentation closed")
             hasAcceptedLaunch = false
             requiresRestart = true
             runtimeStatus = L("Runtime stopped; restart the app before another launch", "Laufzeit beendet; starte die App neu, bevor du ein weiteres Spiel startest")
@@ -936,11 +980,13 @@ final class LauncherModel {
     func stop() async {
         guard hasAcceptedLaunch, !isStopping, !stopRequested else { return }
         recordLifecycleEvent("stop() called")
+        snapshotTestSession(reason: "User requested native stop")
         isStopping = true
         launchError = nil
         defer { isStopping = false }
         do {
             try await runtime.stop()
+            finishTestSession(outcome: .stopped, reason: "User-requested native stop confirmed")
             hasAcceptedLaunch = false
             requiresRestart = true
             runtimeStatus = L("Runtime stopped; restart the app before another launch", "Laufzeit beendet; starte die App neu, bevor du ein weiteres Spiel startest")
@@ -1037,6 +1083,66 @@ final class LauncherModel {
 
     func presentLibraryError(_ error: Error) {
         showImportError(error)
+    }
+
+    private func beginTestSession() throws {
+        diagnosticsAttemptActive = false
+        guard let sessionDiagnostics, let manifest else { throw LauncherFailure.sessionDiagnosticsUnavailable }
+        // Invalid drafts still receive a journal entry before effectiveManifest
+        // throws; valid saved Steam entries use the reconciled child architecture.
+        let requested = (try? effectiveManifest()) ?? manifest
+        let profile = selectedEntry?.profiles.first(where: { $0.id == selectedProfileID })
+        let receipt = Bundle.main.resourceURL?.appendingPathComponent("Runtime/AVPPLAY_NATIVE_BUILD_RECEIPT.json")
+        let receiptData = receipt.flatMap { try? Data(contentsOf: $0) }
+        let runtimeBuildID = receiptData.map { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
+        let metadata = SessionDiagnostics.Metadata(
+            title: requested.title, manifestID: requested.id,
+            steamAppID: steamSelection?.game.id,
+            steamLaunchOptionID: steamSelection.map { Int($0.option) },
+            architecture: requested.guestArchitecture?.rawValue ?? "automatic",
+            graphics: requested.graphics.rawValue, renderScale: Double(renderScaleDraft),
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            buildNumber: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            runtimeBuildID: runtimeBuildID, profileID: selectedProfileID, profileName: profile?.name ?? profileNameDraft)
+        let prefix: URL?
+        if requested.id == "steam.shared" {
+            prefix = MadeiraDock.prefix
+        } else if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let identity = SHA256.hash(data: Data(requested.id.utf8)).map { String(format: "%02x", $0) }.joined()
+            prefix = documents.appendingPathComponent("WindowsVR/Prefixes/" + identity, isDirectory: true)
+        } else { prefix = nil }
+        diagnosticsFailureReason = nil
+        diagnosticsNativeState = nil
+        _ = try sessionDiagnostics.beginAttempt(metadata: metadata, prefixURL: prefix)
+        diagnosticsAttemptActive = true
+    }
+
+    private func snapshotTestSession(reason: String) {
+        guard diagnosticsAttemptActive else { return }
+        do { try sessionDiagnostics?.snapshot(reason: reason) }
+        catch { launchLog.error("Test session snapshot failed: \(error.localizedDescription)") }
+    }
+
+    private func noteTestSessionFailure(_ reason: String) {
+        guard diagnosticsAttemptActive else { return }
+        diagnosticsFailureReason = reason
+        do { try sessionDiagnostics?.snapshot(reason: reason, outcome: .failed) }
+        catch { launchLog.error("Test session failure snapshot failed: \(error.localizedDescription)") }
+    }
+
+    private func finishTestSession(outcome: SessionDiagnostics.Outcome, reason: String) {
+        guard diagnosticsAttemptActive else { return }
+        do {
+            try sessionDiagnostics?.finish(outcome: diagnosticsFailureReason == nil ? outcome : .failed,
+                                           reason: diagnosticsFailureReason ?? reason)
+            diagnosticsAttemptActive = false
+        } catch { launchLog.error("Test session final snapshot failed: \(error.localizedDescription)") }
+    }
+
+    func makeTestSessionsJSON() throws -> Data {
+        guard let sessionDiagnostics else { throw LauncherFailure.sessionDiagnosticsUnavailable }
+        let url = try sessionDiagnostics.exportBundle()
+        return try Data(contentsOf: url)
     }
 
     private var draftArguments: [String] {
@@ -1148,6 +1254,7 @@ final class LauncherModel {
             }
             guard let self, self.hasAcceptedLaunch else { return }
             launchLog.error("Guest startup stalled: no ntdll load within 60 s of the launch being accepted")
+            self.snapshotTestSession(reason: "Startup watchdog did not observe its ntdll marker within 60 seconds; game readiness unknown")
             let dumpPath = documents.appendingPathComponent("launcher-log.txt").path
             wvr_dump_thread_stacks_v1(dumpPath, "startup stall")
             // A second sample shows whether the odd threads are moving or fixed.
@@ -1175,6 +1282,7 @@ final class LauncherModel {
                     self.compilerFailureHandled = true
                     let detail = String(cString: shaderError)
                     self.recordLifecycleEvent("compiler failure requests session stop")
+                    self.noteTestSessionFailure("Native shader compiler reported a failure and requested stop")
                     LaunchLogFile.append("compiler-failure", String(detail.prefix(768)))
                     await self.stop()
                     self.launchError = detail
@@ -1188,8 +1296,17 @@ final class LauncherModel {
     private func refreshRuntimeStatus() {
         let snapshot = runtime.nativeStatus()
         if manifest?.id == "steam.shared", let failure = MadeiraDock.pollReport().failure {
-            if launchError != failure { launchLog.error("Steam launch failure: \(failure)") }
+            if launchError != failure {
+                launchLog.error("Steam launch failure: \(failure)")
+                noteTestSessionFailure("Steam reported a launch failure")
+            }
             launchError = failure
+        }
+        if diagnosticsNativeState != snapshot.state {
+            diagnosticsNativeState = snapshot.state
+            if snapshot.state == 4 {
+                snapshotTestSession(reason: "Wine process active; game readiness and rendering unknown")
+            }
         }
         switch snapshot.state {
         case 0: runtimeStatus = L("Launch accepted; runtime is idle", "Start wurde angenommen; Laufzeit ist im Leerlauf")
@@ -1202,6 +1319,7 @@ final class LauncherModel {
             runtimeStatus = L("Exit requested; waiting for the guest and Wine process", "Beenden angefordert; warte auf Gast- und Wine-Prozess")
         case 6:
             recordLifecycleEvent("native runtime transitioned to stopped")
+            finishTestSession(outcome: .stopped, reason: "Native runtime stopped; game result unverified")
             stopRequested = false
             runtimeStatus = L("Runtime stopped; restart the app before another launch", "Laufzeit beendet; starte die App neu, bevor du ein weiteres Spiel startest")
             hasAcceptedLaunch = false
@@ -1211,6 +1329,7 @@ final class LauncherModel {
         case 7:
             recordLifecycleEvent("native runtime transitioned to failed")
             if let error = snapshot.lastError { LaunchLogFile.append("runtime-failure", String(error.prefix(768))) }
+            finishTestSession(outcome: .failed, reason: "Native runtime reported failure")
             stopRequested = false
             runtimeStatus = L("Runtime failed; restart the app before another launch", "Laufzeitfehler; starte die App neu, bevor du ein weiteres Spiel startest")
             hasAcceptedLaunch = false
@@ -1247,6 +1366,7 @@ final class LauncherModel {
 
     private func recordStopFailure(_ error: Error, becauseImmersiveClosed: Bool) {
         if case WindowsRuntimeError.stopPending = error {
+            snapshotTestSession(reason: "Cooperative stop pending; native process still owns the session")
             stopRequested = true
             runtimeStatus = L("Exit requested; waiting for the guest and Wine process", "Beenden angefordert; warte auf Gast- und Wine-Prozess")
             launchError = becauseImmersiveClosed
@@ -1255,6 +1375,7 @@ final class LauncherModel {
             // Keep both access and monitoring until native stopped/failed status.
             return
         }
+        snapshotTestSession(reason: "Stop could not be confirmed; native session remains active")
         launchError = stopFailureMessage(error, becauseImmersiveClosed: becauseImmersiveClosed)
     }
 
@@ -1283,8 +1404,14 @@ final class LauncherModel {
 
 private enum LauncherFailure: LocalizedError {
     case runtimePluginMissing
+    case sessionDiagnosticsUnavailable
     var errorDescription: String? {
-        L("The signed WindowsRuntimePlugin.framework is not embedded in this app, so no launch request was sent.", "Das signierte WindowsRuntimePlugin.framework ist nicht in dieser App eingebettet. Es wurde keine Startanfrage gesendet.")
+        switch self {
+        case .runtimePluginMissing:
+            L("The signed WindowsRuntimePlugin.framework is not embedded in this app, so no launch request was sent.", "Das signierte WindowsRuntimePlugin.framework ist nicht in dieser App eingebettet. Es wurde keine Startanfrage gesendet.")
+        case .sessionDiagnosticsUnavailable:
+            L("Test session logs are unavailable for this app launch. Reopen the app and try exporting again.", "Testsitzungsprotokolle sind für diesen App-Start nicht verfügbar. Öffne die App erneut und versuche den Export noch einmal.")
+        }
     }
 }
 

@@ -221,6 +221,23 @@ class X86PackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "requires --enable-x86"):
             stage.validate_guest_tree(self.guest)
 
+    def test_game_imports_require_translated_guest_variants(self):
+        # The service-host ARM64 copy cannot substitute for a missing
+        # ARM64EC/x64 import, even when it has the same DLL filename.
+        for name in ("dwmapi.dll", "wsock32.dll", "avrt.dll", "vcruntime140.dll", "msvcp140.dll"):
+            with self.subTest(module=name):
+                target = self.source / "arm64ec-windows" / name
+                original = target.read_bytes()
+                self.pe(self.source / "aarch64-windows" / name, 0xAA64)
+                target.unlink()
+                with self.assertRaises(SystemExit):
+                    stage.validate_wine_resources(self.source)
+                self.pe(target, 0xAA64)
+                with self.assertRaises(SystemExit):
+                    stage.validate_wine_resources(self.source)
+                target.write_bytes(original)
+                stage.validate_wine_resources(self.source)
+
     def test_opt_in_copies_and_hashes_complete_i386_farm(self):
         stage.validate_wine_resources(self.source, True)
         stage.validate_guest_tree(self.guest, True)

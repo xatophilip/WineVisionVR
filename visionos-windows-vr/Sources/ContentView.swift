@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var importingManifest = false
     @State private var importingGameFolder = false
     @State private var exportingReport = false
+    @State private var exportFilename = "winevision-test-sessions.json"
     @State private var showingSteamLibrary = false
     @State private var didStartDesktopSmokeTest = false
     @State private var reportDocument = CompatibilityReportDocument(data: Data())
@@ -22,6 +23,13 @@ struct ContentView: View {
                 NavigationStack {
                     launcherHome
                         .navigationTitle("WineVision VR")
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button(L("Export test sessions", "Testsitzungen exportieren"), systemImage: "square.and.arrow.up") {
+                                    exportTestSessions()
+                                }
+                            }
+                        }
                 }
             }
         }
@@ -93,7 +101,7 @@ struct ContentView: View {
             isPresented: $exportingReport,
             document: reportDocument,
             contentType: .json,
-            defaultFilename: model.reportFilename
+            defaultFilename: exportFilename
         ) { result in
             if case .failure(let error) = result { model.presentLibraryError(error) }
         }
@@ -108,6 +116,14 @@ struct ContentView: View {
                 Task { await dismissImmersiveSpace() }
             }
         }
+    }
+
+    private func exportTestSessions() {
+        do {
+            reportDocument = CompatibilityReportDocument(data: try model.makeTestSessionsJSON())
+            exportFilename = "winevision-test-sessions.json"
+            exportingReport = true
+        } catch { model.presentLibraryError(error) }
     }
 
     private var launcherHome: some View {
@@ -417,6 +433,7 @@ struct ContentView: View {
                     Button(L("Export versioned JSON report", "Versionierten JSON-Bericht exportieren"), systemImage: "square.and.arrow.up") {
                         do {
                             reportDocument = CompatibilityReportDocument(data: try model.makeCompatibilityReportJSON())
+                            exportFilename = model.reportFilename
                             exportingReport = true
                         } catch {
                             model.presentLibraryError(error)

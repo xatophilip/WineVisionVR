@@ -135,6 +135,8 @@ struct SteamLibraryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(entry.game.name).font(.headline).lineLimit(2).frame(height: 44, alignment: .topLeading)
                 Label(status(entry.id), systemImage: statusIcon(entry.id)).font(.caption).foregroundStyle(.secondary)
+                Text(entry.game.downloadBytes.map { "About \(ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file)) download" } ?? "Download size unavailable")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let progress = model.progress[entry.id] { ProgressView(value: progress.fraction).tint(.cyan) }
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -195,6 +197,12 @@ private struct SteamGameDownloadView: View {
                     SteamGameArtwork(game: entry.game).frame(height: 210).clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                     Text(entry.game.name).font(.title2.bold())
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(entry.game.downloadBytes.map { "Full download: about \(bytes($0))" } ?? "Download size unavailable", systemImage: "arrow.down.circle")
+                        Label(entry.game.installedBytes.map { "Installed size: about \(bytes($0))" } ?? "Installed size unavailable", systemImage: "internaldrive")
+                        Text("Estimates from Steam. Resuming or repairing may download less; installation can need extra temporary space.")
+                            .font(.caption)
+                    }.font(.callout).foregroundStyle(.secondary)
                     if let progress = model.progress[entry.id] {
                         VStack(alignment: .leading, spacing: 8) {
                             ProgressView(value: progress.fraction).tint(.cyan)
@@ -243,13 +251,17 @@ private struct SteamGameDownloadView: View {
                                     .buttonStyle(.borderedProminent)
                                     .disabled(model.runtimeBusy || model.isPreparingValveClient || !MadeiraDock.bundled)
                             }
-                            Button(model.activeDownloads.isEmpty ? "Update / repair" : "Queue update / repair") { model.download(entry) }
                         } else {
                             Button(model.runtimeBusy || !model.activeDownloads.isEmpty ? "Add to download queue" : (failure != nil ? "Retry download" : (isPartial || model.pausedDownloads.contains(entry.id) ? "Resume download" : "Download")), systemImage: "arrow.down.circle.fill") {
                                 model.download(entry)
                             }.buttonStyle(.borderedProminent)
                         }
-                        Spacer()
+                        Spacer(minLength: 48)
+                        if !isActive, queuePosition == nil,
+                           model.installedIDs.contains(entry.id), !isPartial, failure == nil {
+                            Button(model.activeDownloads.isEmpty ? "Update / repair" : "Queue update / repair") { model.download(entry) }
+                                .buttonStyle(.bordered)
+                        }
                     }
                     if !MadeiraDock.clientInstalled {
                         Text("The Valve launch files are required before selecting an installed game. Preparing them does not start Wine.").font(.footnote).foregroundStyle(.secondary)

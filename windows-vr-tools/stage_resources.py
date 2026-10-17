@@ -35,6 +35,9 @@ ARM64EC_REQUIRED_BUILTINS = {
     "jsproxy.dll", "mfplat.dll", "mfreadwrite.dll", "mlang.dll", "netapi32.dll",
     "nsi.dll", "oleaut32.dll", "propsys.dll", "shdocvw.dll", "urlmon.dll",
     "windowscodecs.dll", "winspool.drv", "wintrust.dll",
+    # Game imports (Fantastic Contraption and Google Earth VR). The ARM64
+    # service farm's versions cannot satisfy an ARM64EC/x64 guest import.
+    "dwmapi.dll", "wsock32.dll", "avrt.dll", "vcruntime140.dll", "msvcp140.dll",
 }
 # Prefix initialization and services run through the 64-bit WoW64 host farm.
 # The translated i386 farm supplies their client DLLs, not duplicate service EXEs.

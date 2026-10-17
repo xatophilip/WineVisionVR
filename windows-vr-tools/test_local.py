@@ -23,6 +23,8 @@ def main():
                         help='scratch/output directory, preferably on a volume with ample space')
     parser.add_argument('--dxmt-source', type=Path,
                         help='DXMT source with this repository\'s patches applied')
+    parser.add_argument('--dxmt-wow64-source', type=Path,
+                        help='prepared legacy DXMT tree for shifted-window WOW64 VR transport checks')
     parser.add_argument('--opencomposite-source', type=Path,
                         help='OpenComposite source with this repository\'s patches applied')
     parser.add_argument('--madeira-source', type=Path,
@@ -72,12 +74,18 @@ def main():
 
     run('packaging', [python, '-m', 'unittest', 'discover', '-s',
                       'windows-vr-tools/tests', '-v'])
+    run('session-diagnostics', [python, 'visionos-windows-vr/Tests/Contracts/test_session_diagnostics.py',
+                                 '--build', build / 'session-diagnostics'])
     run('vr-registration', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration.py'])
+    run('vr-registration-architecture', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration_architecture.py',
+                                           '--build', build / 'vr-registration-architecture'])
     run('steam-launch-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_launch_selection.py'])
     run('steam-guest-architecture', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_guest_architecture.py',
                                      '--build', build / 'steam-guest-architecture'])
     run('steam-download-queue', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_queue.py',
                                   '--build', build / 'steam-download-queue'])
+    run('steam-download-sizes', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_sizes.py',
+                                  '--build', build / 'steam-download-sizes'])
     run('graphics-profile-link', [python, 'windows-runtime-plugin/Tests/test_graphics_profile_link.py',
                                   '--build', build / 'graphics-profile-link'])
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
@@ -130,6 +138,13 @@ def main():
             run(label, [python, f'windows-vr-openxr/tests/test_{name}.py', source, *flags])
     else:
         skip('dxmt-regressions', '--dxmt-source not supplied; requires the patched overlay')
+
+    if args.dxmt_wow64_source:
+        run('wow64-vr-pointers', [python, 'windows-vr-openxr/tests/test_wow64_wvr_pointers.py',
+                                  '--source', args.dxmt_wow64_source.expanduser().resolve(),
+                                  '--build', build / 'wow64-vr-pointers'])
+    else:
+        skip('wow64-vr-pointers', '--dxmt-wow64-source not supplied; requires legacy WOW64 DXMT')
 
     if args.opencomposite_source:
         run('inverted-eye-bounds', [python, 'windows-vr-openvr/tests/test_inverted_bounds.py',

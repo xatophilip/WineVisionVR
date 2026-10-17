@@ -35,12 +35,13 @@ def project_patch_hashes():
     for directory in directories:
         if directory.exists():
             for patch in sorted(directory.glob("*.patch")):
-                # The baseline applies only the D3D11 transport patch here.
+                # The baseline applies its D3D11 transport and WOW64 pointer fix here.
                 # Modern DXMT patches have their own profile source-tree and
                 # integration-input receipts; changing them must not invalidate
                 # an unchanged Madeira/FEX/Wine baseline source overlay.
                 if (directory == ROOT / "windows-vr-openxr/patches"
-                        and patch.name != "0001-dxmt-wvr-frame-bridge.patch"):
+                        and patch.name not in {"0001-dxmt-wvr-frame-bridge.patch",
+                                               "0018-dxmt-legacy-wvr-wow64-pointers.patch"}):
                     continue
                 hashes[patch.relative_to(ROOT).as_posix()] = hashlib.sha256(patch.read_bytes()).hexdigest()
     # Transport headers and copied adapter sources are ABI inputs too. Reusing
@@ -243,7 +244,9 @@ def main():
                 # The experimental queue, mobile/native port, modern D3D11
                 # bridge, and xros metallib overlays belong only to the pinned
                 # modern DXMT profile; never apply them to Madeira baseline.
-                if directory == ROOT / "windows-vr-openxr/patches" and patch.name != "0001-dxmt-wvr-frame-bridge.patch":
+                if (directory == ROOT / "windows-vr-openxr/patches"
+                        and patch.name not in {"0001-dxmt-wvr-frame-bridge.patch",
+                                               "0018-dxmt-legacy-wvr-wow64-pointers.patch"}):
                     continue
                 patch_hashes[patch.relative_to(ROOT).as_posix()] = hashlib.sha256(patch.read_bytes()).hexdigest()
                 # Applies source edits only; no dry run, build, or executable probe.

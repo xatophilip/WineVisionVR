@@ -427,6 +427,72 @@ ARM64EC, 137 ARM64, and 723 i386/guest bridge binaries. The exact 141 private
 Win16 compatibility forwarders from i386 kernel32 remain explicitly unsupported;
 direct dependencies and other forwarders still require real providers.
 
-Headset execution and Audioshield gameplay remain unverified until physical
-tests are recorded. A host i386 Wine attempt timed out during prefix
-initialization and is not evidence of headset compatibility.
+On 17 October 2026, the real Vision Pro passed the i386 mixed MSVC/MinGW ABI
+fixture and CPU/event fixture (`pointerBits=32`). Wine logs confirm FEX WOW64
+execution, and the CPU fixture loads the matching graphics DLLs. The initial VR
+scene created a D3D11 device but failed retrieving targets: WOW64 dispatch slots
+151/152 did not translate the embedded request pointer into the shifted guest
+window. Patch 0018 adds dedicated wrappers for that pointer while leaving native
+64-bit dispatch and Metal object IDs unchanged. A sanitizer regression exercises
+V1/V2 target/submission calls and reproduces both old faults. Only the native
+Winemetal object/combined archive changed; fresh source/receipt audits verified
+that all guest resources and other native archives remained unchanged.
+
+Steam registration now selects the matching stable x86/x64 runtime and registry
+view. The x86 path uses `Software\\Wow6432Node\\Khronos\\OpenXR\\1`; it preserves
+the x64 registry view. Actual Swift/filesystem tests cover switching views and
+runtime folders. On-device retesting after the pointer fix submitted the first
+four 32-bit VR frames, then failed in the Metal pipeline with AGX bitcode errors;
+the user saw grey in one eye. That legacy build also regressed Windlands. The
+original modern build was restored and the user confirmed Windlands working.
+Audioshield additionally remains blocked at its mixed-architecture Steam child
+bootstrap. Neither result establishes playable 32-bit VR support. The narrow
+AIR container fix for xros OS metadata is covered by a host sanitizer regression
+but remains an experimental hardware candidate. A host i386 Wine attempt had
+timed out during prefix initialization and was not evidence of headset incompatibility.
+
+### Testing several games
+
+Each launch attempt now starts a persistent diagnostic journal before preflight
+and JIT. It records game/Steam app and option, requested architecture, graphics,
+profile, render scale and build identity, followed by factual launch/stop/failure
+milestones. Records do not classify a Wine process as successful gameplay.
+
+The app keeps the latest 20 attempts in
+`Documents/WindowsVR/SessionDiagnostics`. Pending attempts are recovered on
+restart before cleanup or runtime log rotation. File identities and offsets
+prevent an earlier game’s unchanged logs being attributed to a failed new launch.
+Each fixed text log keeps bounded startup and tail text with an explicit
+truncation marker; binary dumps, pairing records and Steam handoff files are not
+collected. Captured text omits lines containing credential markers.
+
+Use **Export test sessions** in the launcher toolbar to save all retained
+attempts as one JSON file, including the current attempt. It remains available
+without a selected game. Export is bounded to 32 MiB. A diagnostic storage error
+is logged and does not block gameplay.
+
+For several games, stop the current session, use **Force quit app** and reopen
+when a restart is required, then select the next game. Export once at the end,
+or leave the paired headset available for the saved journals to be collected.
+A short note about what was visible and whether controls/audio worked adds
+evidence that process and frame counters cannot establish.
+
+### Download sizes and additional game imports
+
+The library cards and game download panel show a full Windows download estimate
+from Steam's compressed depot metadata. The panel separately shows the installed
+size. Both use the installer's Windows/architecture/language/depot selection;
+missing required or unresolved shared-depot metadata displays unavailable rather
+than a partial total. Legacy maxsize is used only for disk size. Resume/repair
+can transfer less, and installation can need additional temporary space. These
+figures require no game payload download. Old cached game entries remain readable.
+Update/repair is a secondary button at the far right, separated from launch.
+
+The 17 October stable-build Fantastic Contraption attempt failed before rendering:
+UnityPlayer could not import dwmapi.dll and WSOCK32.dll (c000007b). Google Earth VR
+similarly rejected VCRUNTIME140.dll, MSVCP140.dll and AVRT.dll. These modules were
+present only as plain ARM64 binaries in the original farm; x64/ARM64EC guests
+require compatible ARM64EC modules. The build and staging requirements now include
+source-built ARM64EC versions of all five. An isolated PE overlay preserves the
+working modern native frameworks; it has separate provenance from the archival
+runtime and must pass real game retesting before either title is called playable.
