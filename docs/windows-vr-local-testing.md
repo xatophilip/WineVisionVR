@@ -514,3 +514,32 @@ report Earth gameplay as fixed. The first new Earth attempt stopped in frontend
 preflight because its offline launch metadata was absent. The remembered-option
 fallback now preserves the explicit prior option and known architecture while
 still rejecting absent/unremembered choices and invalid known options.
+
+### Job Simulator — confirmed working, 17 October 2026
+
+**Job Simulator (Steam app 448280) works on the physical Apple Vision Pro**, as
+confirmed by the user during the test. The selected Steam launch option was 0.
+The tested headset is the M2 model running visionOS 27.2, using the modern
+D3D11/OpenVR runtime with JIT enabled.
+
+Tested application: the single-option launcher build from source checkpoint
+`f3d7b35`, executable UUID `FF26154C-9A14-3681-B78F-420221BBC4BC`. It contains the
+six ARM64EC compatibility DLL additions and rebuilt Steam launch host while
+preserving the working native frameworks. Job Simulator uses its ordinary Steam
+launch arguments; the forced `-vrmode openvr` override is scoped to Fantastic
+Contraption only.
+
+The captured run submitted 521 VR frames with zero guest GPU failures. One
+five-second window delivered 63.5 new guest frames per second; the compositor
+reported 86.2 display frames per second. This is a short rendering sample, not a
+sustained performance benchmark. Saved evidence is under the local build
+folder `black-screen-oct17/`: `job-confirmed-launcher.log`, `job-first-runtime.log`
+and `job-first-sessions/` (current attempt
+`D33EC06F-B863-4A3A-8325-97863C917536`).
+
+Fantastic Contraption's follow-up also initialized OpenVR and audio, and
+submitted over 1,000 VR frames with no GPU failures. The user reported an
+hourglass and a strangely aligned object, so it remains a partial result rather
+than a confirmed playable title. Both eye crops were correct in the captured
+double-wide submission; loading pauses reused the previous frame. The user
+confirmed leaving the immersive view, explaining that recorded closure.
