@@ -208,3 +208,14 @@ ntdll startup markers. It also sought to EOF before reading and relied on a
 platform-dependent nil-versus-empty-Data fallback to rewind.
 That diagnostic bug is separate from the pointer failure. These results prove
 32-bit desktop execution, not correct mouse controls, D3D11 rendering or gameplay.
+
+
+Wine patch `0013` addresses the missing client mouse-down: the captured button
+returned `MA_ACTIVATE`, then Wine discarded the press when its redundant
+foreground request returned false even though the requested root was already
+active. The fix matches Wine's existing non-client activation handling: discard
+on activation failure only if that root is not active. Intentional
+`MA_ACTIVATEANDEAT`/`MA_NOACTIVATEANDEAT` behavior remains intact. Sanitizer tests
+execute the production activation branch and cover those cases. This changes
+the baseline source fingerprint and requires a fresh build; the installed app
+does not yet contain the fix, and physical clicking must be retested.

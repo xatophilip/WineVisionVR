@@ -148,11 +148,15 @@ def main():
         run('child-gdi-publication', [python, 'windows-runtime-plugin/Tests/test_child_gdi_publication.py',
                                       '--runtime-source', runtime_source,
                                       '--build', build / 'child-gdi-publication'])
+        run('mouse-activation', [python, 'windows-runtime-plugin/Tests/test_mouse_activation.py',
+                                   '--runtime-source', runtime_source,
+                                   '--build', build / 'mouse-activation'])
         run('jit-pool-arbitration', [python, 'windows-vr-openxr/tests/test_jit_pool_arbitration.py',
                                      '--runtime-source', runtime_source,
                                      '--output-dir', build / 'jit-pool-arbitration'])
     else:
         skip('child-gdi-publication', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+        skip('mouse-activation', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('jit-pool-arbitration', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
 
     modern_source = args.dxmt_modern_wow64_source
