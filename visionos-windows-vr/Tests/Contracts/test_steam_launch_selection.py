@@ -22,6 +22,10 @@ launcher = (ROOT / 'Sources/LauncherModel.swift').read_text()
 compatibility = 'nonisolated static func steamCompatibilityEnvironment(' + launcher.split(
     'nonisolated static func steamCompatibilityEnvironment(', 1)[1].split('    /// Steam\'s 64-bit launch host', 1)[0]
 assert 'environment: Self.steamCompatibilityEnvironment(appID: game.id)' in launcher
+dock = (ROOT / 'Sources/Steam/MadeiraDock.swift').read_text()
+extra_arguments = 'static func extraLaunchArguments(' + dock.split('static func extraLaunchArguments(', 1)[1].split('    @MainActor static func configure(', 1)[0]
+assert 'extraLaunchArguments(appID: game.id)' in dock
+assert 'unsetenv("MADEIRA_STEAM_HOST_EXTRA_ARGS")' in dock
 
 SHELL = r'''
 import Foundation
@@ -47,6 +51,12 @@ check(CompatibilityProbe.steamCompatibilityEnvironment(appID: 546560, base: inhe
       "Other games must retain their own CPU environment unchanged")
 check(CompatibilityProbe.steamCompatibilityEnvironment(appID: 0).isEmpty,
       "Do not introduce a global CPU compatibility setting")
+check(SteamArgumentProbe.extraLaunchArguments(appID: 386690) == "-vrmode openvr",
+      "Fantastic Contraption must request Unity OpenVR explicitly")
+check(SteamArgumentProbe.extraLaunchArguments(appID: 428370) == nil && SteamArgumentProbe.extraLaunchArguments(appID: 0) == nil,
+      "Do not change working Windlands or unrelated game arguments")
+check(CompatibilityProbe.steamCompatibilityEnvironment(appID: 386690).isEmpty,
+      "Reserved internal launch settings must never enter a game manifest")
 check(CompatibilityProbe.steamCompatibilityEnvironment(appID: 428370) == ["OPENSSL_ia32cap": "0"],
       "Ordinary Windlands selection must not depend on injected app environment")
 let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf:
@@ -109,6 +119,7 @@ with tempfile.TemporaryDirectory(prefix='wvr-launch-selection-') as scratch:
     scratch = Path(scratch)
     source = (SHELL + '\nenum SteamLibraryModel {\n' + selection + '\n}\n'
               + 'enum CompatibilityProbe {\n' + compatibility + '\n}\n'
+              + 'struct SteamArgumentProbe {\n' + extra_arguments + '\n}\n'
               + 'struct LabelProbe {\n' + label
               + '\nfunc label(_ option: SteamLaunchOption) -> String { optionLabel(option) }\n}\n' + PROBE)
     (scratch / 'main.swift').write_text(source)

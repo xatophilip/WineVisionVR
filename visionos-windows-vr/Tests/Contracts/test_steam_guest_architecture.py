@@ -151,6 +151,17 @@ try check(try restored.restoredManifest(saved(nil)).guestArchitecture == .x86 &&
       "Missing remembered option must reconcile to the installed option before preflight")
 try check(try restored.restoredManifest(saved(.arm64ec, id: "direct.fixture")).guestArchitecture == .arm64ec,
       "Direct non-Steam manifests retain their own explicit architecture")
+SteamLocalAppInfo.options = nil
+UserDefaults.standard.values["options"] = [String(game.id): 0]
+try check(try restored.restoredManifest(saved(.x86)).guestArchitecture == .x86,
+      "Missing offline metadata retains a remembered option and known x86 architecture")
+try check(try restored.restoredManifest(saved(nil)).guestArchitecture == nil,
+      "Missing offline metadata must not block an explicitly remembered x64 launch")
+UserDefaults.standard.values["options"] = [:]
+do {
+    _ = try restored.restoredManifest(saved(nil))
+    fatalError("Missing metadata without a remembered choice must still require selection")
+} catch DockError.message { }
 let resources = base.appendingPathComponent("resources")
 try check(!Probe.bundledX86RuntimeAvailable(resources: nil, immersiveVR: false), "No bundle cannot supply x86")
 try check(!Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: false), "Verified x64-only bundle must reject x86 child before old native plugin")

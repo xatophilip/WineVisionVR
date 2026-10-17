@@ -496,3 +496,21 @@ require compatible ARM64EC modules. The build and staging requirements now inclu
 source-built ARM64EC versions of all five. An isolated PE overlay preserves the
 working modern native frameworks; it has separate provenance from the archival
 runtime and must pass real game retesting before either title is called playable.
+
+The first composite five-DLL build was installed on the Vision Pro. Fantastic
+Contraption loaded dwmapi/WSOCK32, initialized Unity 2019.2 and created its D3D11
+Apple M2 device, confirming the original import failure was cleared. It did not
+submit VR frames: Player.log reported SteamVR initialization failure, followed
+by Oculus plugin fallback errors, and FMOD had no audio device. Steam's actual
+cached metadata publishes one VR launch option with no arguments. A scoped
+`-vrmode openvr` request and matching ARM64EC mmdevapi are the next test; Oculus
+fallback errors do not establish a need to install Oculus services.
+
+Google Earth requires more than its corrected imports: the native iOS user
+driver does not implement OpenGL initialization, the packaged OpenComposite path
+is Direct3D-only, and this OpenXR runtime exposes only D3D11/D3D12 bindings.
+Earth's Ion renderer is OpenGL; no supported Direct3D switch was found. Do not
+report Earth gameplay as fixed. The first new Earth attempt stopped in frontend
+preflight because its offline launch metadata was absent. The remembered-option
+fallback now preserves the explicit prior option and known architecture while
+still rejecting absent/unremembered choices and invalid known options.

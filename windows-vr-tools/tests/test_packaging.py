@@ -224,7 +224,7 @@ class X86PackagingTests(unittest.TestCase):
     def test_game_imports_require_translated_guest_variants(self):
         # The service-host ARM64 copy cannot substitute for a missing
         # ARM64EC/x64 import, even when it has the same DLL filename.
-        for name in ("dwmapi.dll", "wsock32.dll", "avrt.dll", "vcruntime140.dll", "msvcp140.dll"):
+        for name in ("dwmapi.dll", "wsock32.dll", "avrt.dll", "vcruntime140.dll", "msvcp140.dll", "mmdevapi.dll"):
             with self.subTest(module=name):
                 target = self.source / "arm64ec-windows" / name
                 original = target.read_bytes()

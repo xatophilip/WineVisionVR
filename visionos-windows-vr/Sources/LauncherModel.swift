@@ -1167,15 +1167,25 @@ final class LauncherModel {
         let base = try selectedProfile?.applying(to: selectedEntry?.manifest ?? manifest) ?? manifest
         var guestArchitecture = base.guestArchitecture
         if base.id == "steam.shared" {
-            guard let selection = steamSelection, selection.game.name == base.title,
-                  let options = SteamLocalAppInfo.launchOptions(appID: selection.game.id, game: selection.game, drive: MadeiraDock.drive)
-                    ?? SteamLibraryModel.shared.games.first(where: { $0.id == selection.game.id })?.game.launches,
-                  let option = options.first(where: { $0.index == selection.option }) else {
+            guard let selection = steamSelection, selection.game.name == base.title else {
                 throw DockError.message("Select this installed Steam game and its launch option again before launching.")
             }
-            // Saved manifests and profiles may predate architecture selection
-            // or retain a different option's value. The installed child wins.
-            guestArchitecture = Self.steamGuestArchitecture(option: option, game: selection.game, drive: MadeiraDock.drive)
+            if let options = SteamLocalAppInfo.launchOptions(appID: selection.game.id, game: selection.game, drive: MadeiraDock.drive)
+                ?? SteamLibraryModel.shared.games.first(where: { $0.id == selection.game.id })?.game.launches {
+                guard let option = options.first(where: { $0.index == selection.option }) else {
+                    throw DockError.message("Select this installed Steam game and its launch option again before launching.")
+                }
+                // The installed child wins over stale saved architecture fields.
+                guestArchitecture = Self.steamGuestArchitecture(option: option, game: selection.game, drive: MadeiraDock.drive)
+            } else {
+                // Steam's offline cache may omit a game before library refresh.
+                // Retain only an explicit remembered choice, as selection does;
+                // never invent a launch index or clear a known x86 architecture.
+                let remembered = UserDefaults.standard.dictionary(forKey: Self.steamLaunchOptionsKey) as? [String: Int] ?? [:]
+                guard remembered[String(selection.game.id)].flatMap(UInt32.init(exactly:)) == selection.option else {
+                    throw DockError.message("Select this installed Steam game and its launch option again before launching.")
+                }
+            }
         }
         return try WindowsGameManifest(
             id: base.id,
