@@ -70,6 +70,7 @@ required={
  "windows-vr-openxr/patches/0021-dxmt-notified-query-progress.patch", "windows-vr-openxr/patches/0022-dxmt-batched-uniform-bindings.patch", "windows-vr-openxr/patches/0023-dxmt-progress-retry-contract.patch",
  "windows-vr-openxr/patches/0024-dxmt-explicit-scene-depth.patch",
  "windows-vr-openxr/patches/0025-dxmt-modern-wow64-transport.patch",
+ "windows-vr-openxr/patches/0026-dxmt-wine-log-nul-safety.patch",
  "windows-vr-openxr/include/WindowsVRWOW64Transport.h",
  "windows-vr-native/include/WindowsVRReconstruction.h",
  "windows-vr-openxr/include/WindowsVRD3D11ContextExt.h","windows-vr-openxr/include/WindowsVRD3D12CommandQueueExt.h","windows-vr-openxr/include/WindowsVRWMTBridge.h",

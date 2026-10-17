@@ -143,3 +143,30 @@ that a 32-bit Windows process executed or crashed. The transferred authored
 Local build, signing, install and diagnostic records are retained under the
 external `x86-modern-oct17-r2` build directory. Pairing credentials and device
 logs are deliberately excluded from Git.
+
+## Space Pirate Trainer diagnostic logging crash
+
+The main app's saved 17 October capture shows Space Pirate Trainer beginning
+at 17:24:44, submitting 3,334 VR frames, and then stopping new guest frames at
+about 17:27:16. This capture used the cache-disabled path. The native log shows
+`debug buffer overflow`, followed by an unhandled `0x80000005` exception and
+process termination. There is no JIT-arena exhaustion or AGX pipeline failure
+in this capture. Subsequent CPU samples show approximately one core busy in
+the exception path; they do not establish repeated shader compilation.
+
+The foveation diagnostic streamed two `uint8_t` values as characters. A zero
+inserted an embedded NUL, truncating the C-string sent to Wine before its
+newline. Repeated truncated records filled Wine's thread-local debug buffer,
+which raises `STATUS_BUFFER_OVERFLOW`. DXMT patch `0026` formats those values
+as unsigned numbers and escapes embedded NULs at the logger boundary. Host
+ASan/UBSan tests execute the production formatting and logger code against a
+Wine-style C-string sink, including 5,000 binary messages and file-output parity.
+
+Patch `0026` is checked into the next modern profile inputs. It is **not in the
+installed UUID `230FDB6F-D27A-361C-BB08-ADFA51EB4682` app**, and has not yet
+been built or tested on the headset. The saved main-app gameplay capture is
+older than that separate test app. After JIT access is restored, rebuild and
+stage the modern profile and retest Space Pirate Trainer before calling this
+fixed on device. Only the right controller was tracked in the saved capture;
+that is a separate possible explanation for incomplete controls, not the
+logging exception.

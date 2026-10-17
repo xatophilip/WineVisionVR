@@ -158,6 +158,9 @@ def main():
         modern_source = Path(env['AVPPLAY_D3D12_PROFILE_SOURCE']) / 'dxmt'
     if modern_source:
         modern_source = Path(modern_source).expanduser().resolve()
+        run('dxmt-wine-log-safety', [python, 'windows-vr-openxr/tests/test_dxmt_wine_log_safety.py',
+                                      '--dxmt-source', modern_source,
+                                      '--output-dir', build / 'dxmt-wine-log-safety'])
         run('modern-wow64-transport', [python, 'windows-vr-openxr/tests/test_modern_wow64_transport.py',
                                        '--dxmt-source', modern_source,
                                        '--output-dir', build / 'modern-wow64-transport'])
@@ -169,6 +172,7 @@ def main():
         else:
             skip('modern-wow64-layout', 'Set AVPPLAY_LLVM_MINGW_ROOT to compare actual i386 and visionOS record layouts')
     else:
+        skip('dxmt-wine-log-safety', '--dxmt-modern-wow64-source or AVPPLAY_D3D12_PROFILE_SOURCE not supplied')
         skip('modern-wow64-transport', '--dxmt-modern-wow64-source or AVPPLAY_D3D12_PROFILE_SOURCE not supplied')
         skip('modern-wow64-layout', '--dxmt-modern-wow64-source or AVPPLAY_D3D12_PROFILE_SOURCE not supplied')
 

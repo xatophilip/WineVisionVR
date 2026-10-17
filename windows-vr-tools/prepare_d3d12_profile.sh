@@ -81,6 +81,7 @@ patches=[
  "windows-vr-openxr/patches/0021-dxmt-notified-query-progress.patch", "windows-vr-openxr/patches/0022-dxmt-batched-uniform-bindings.patch", "windows-vr-openxr/patches/0023-dxmt-progress-retry-contract.patch",
  "windows-vr-openxr/patches/0024-dxmt-explicit-scene-depth.patch",
  "windows-vr-openxr/patches/0025-dxmt-modern-wow64-transport.patch",
+ "windows-vr-openxr/patches/0026-dxmt-wine-log-nul-safety.patch",
 ]
 subprocess.run(["git","init","--quiet"],cwd=dest,check=True)
 for rel in patches:
