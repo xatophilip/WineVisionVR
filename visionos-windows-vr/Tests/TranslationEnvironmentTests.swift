@@ -6,11 +6,11 @@ import Foundation
   WindowsVRTranslationEnvironment.applyDefaults()
   assert(String(cString: getenv("FEX_MAXINST")) == "1024")
   assert(String(cString: getenv("FEX_MULTIBLOCK")) == "1")
-  assert(String(cString: getenv("FEX_ENABLECODECACHINGWIP")) == "1")
-  assert(String(cString: getenv("FEX_ENABLECODECACHEVALIDATION")) == "0")
-  setenv("FEX_ENABLECODECACHINGWIP", "0", 1)
-  WindowsVRTranslationEnvironment.applyDefaults()
   assert(String(cString: getenv("FEX_ENABLECODECACHINGWIP")) == "0")
-  print("PASS: translation defaults apply before Wine, preserve explicit overrides and enable the implemented persistent cache")
+  assert(String(cString: getenv("FEX_ENABLECODECACHEVALIDATION")) == "0")
+  setenv("FEX_ENABLECODECACHINGWIP", "1", 1)
+  WindowsVRTranslationEnvironment.applyDefaults()
+  assert(String(cString: getenv("FEX_ENABLECODECACHINGWIP")) == "1")
+  print("PASS: translation defaults apply before Wine, preserve explicit overrides and leave the experimental cache launcher opt-in")
  }
 }

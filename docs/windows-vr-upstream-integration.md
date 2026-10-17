@@ -115,3 +115,33 @@ reprojection. Prior Fantastic Contraption logs recorded guest frames stopping
 while compositor/GPU completions continued, so that case cannot be explained
 solely by a slow headset display. No measured FPS gain or reliable Fantastic
 Contraption fix has yet been established.
+
+
+## Subsequent headset regression investigation
+
+The source-built candidate did not preserve the prior gameplay result: the user
+reported errors in several games and initially no Windlands view. Steam selected
+Windlands option 5 and reported launch-client-error=0, but the game child faulted
+before submitting guest frames. The Wine log identifies a null per-process GDI
+shared-handle table: the faulting staged gdi32 exports are `get_gdi_client_ptr`
+(RVA 0x2c1d8, read 0x60e) and `SelectObject` (RVA 0x2d25c, read 0x656).
+This is not evidence of missing packaged font files: the fresh and preserved apps
+have matching font resources. Repeated FEX code-buffer mprotect warnings alone
+are not proof of the fatal cause.
+
+A diagnostic launch with `FEX_ENABLECODECACHINGWIP=0` bypasses the new cache
+launcher wrapper. The user then reported a Windlands splash screen and later
+progress; a menu/level confirmation and sustained session are separate gates.
+The application now leaves this experimental wrapper disabled by default while
+preserving explicit opt-in overrides. The package and native persistent-cache
+implementation remain available. This mitigation is not a claim that the deeper
+Wine GDI child-initialization issue has been repaired.
+
+The native follow-up is to publish per-child GDI state after the process-local
+initialization entry in `build/win32u-unix/class_ios.c` and allow the existing
+64-bit publisher through `win32u_gdi_check_publish` in
+`wine/dlls/win32u/win32u_private.h`, while preserving the WoW64 section gate.
+Those are generated/prepared dependency paths: any repair must be implemented as
+a tracked preparation patch, rebuilt with matching receipts, and tested across
+launcher, Steam and game children. No such native change is represented by the
+current workaround.

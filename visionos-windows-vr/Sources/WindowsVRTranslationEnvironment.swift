@@ -8,8 +8,10 @@ enum WindowsVRTranslationEnvironment {
         // A compilation-size candidate; validate against the upstream 5000 default.
         "FEX_MAXINST": "512",
         "FEX_SILENTLOG": "1",
-        // The packaged FEX loader and prelaunch compiler implement eager reuse.
-        "FEX_ENABLECODECACHINGWIP": "1",
+        // Keep the experimental cache launcher opt-in. A headset startup
+        // regression exposed missing per-child Wine GDI state with the wrapper.
+        // Explicit environment overrides still allow controlled comparisons.
+        "FEX_ENABLECODECACHINGWIP": "0",
         "FEX_ENABLELAZYCODECACHINGWIP": "0",
         "FEX_ENABLECODECACHEVALIDATION": "0"
     ]
