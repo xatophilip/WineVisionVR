@@ -1,5 +1,26 @@
 # Local correctness and performance workflow
 
+## Current game status — 17 October 2026
+
+The user reconfirmed **Windlands and Job Simulator both work** on 17 October
+2026, on the physical M2 Apple Vision Pro running visionOS 27.2 with PS VR2
+Sense controllers.
+
+| Game | Latest confirmed result |
+|---|---|
+| Windlands (Steam 428370) | Working: a level starts and controller input works. |
+| Job Simulator (Steam 448280) | Working: confirmed by the user during headset testing and reconfirmed afterward. |
+| Fantastic Contraption (Steam 386690) | Unresolved: freezes/crashes; not confirmed playable. |
+| Google Earth VR (Steam 348250) | Unresolved: unsupported OpenGL rendering path. |
+| Audioshield | Unresolved: experimental 32-bit runtime and mixed-architecture launch limitations. |
+
+Working means user-confirmed gameplay on the tested setup; it does not establish
+long-session stability or a sustained FPS result. The earlier failures below
+are a chronological investigation record and do not supersede these latest
+Windlands and Job Simulator confirmations.
+
+## Running local checks
+
 Run the host checks before changing the frame or query paths. They need Apple
 silicon, Python 3, and full Xcode. They do not need Wine, signing, a game, or a
 headset. Choose a build directory with ample free space; the runner directs its

@@ -18,7 +18,20 @@ https://ko-fi.com/hudsonmcox
 
 ## Status
 
-As of 2026-10-14, on one headset (M2 Vision Pro, visionOS 27.2):
+### This fork: confirmed working, 17 October 2026
+
+**Windlands and Job Simulator work on the physical M2 Apple Vision Pro running
+visionOS 27.2 with PS VR2 Sense controllers.** The user confirmed both games
+working, including starting a level and using the controls in Windlands.
+
+These are gameplay confirmations, not sustained stability or performance
+benchmarks. Fantastic Contraption still freezes/crashes; Google Earth VR and
+Audioshield remain unresolved. See the [local testing record](docs/windows-vr-local-testing.md#current-game-status--17-october-2026)
+for evidence and limitations.
+
+### Upstream baseline, 14 October 2026
+
+The upstream project recorded the following on one headset (M2 Vision Pro, visionOS 27.2):
 
 - Works: Steam sign-in, downloads and launch inside the app; Moss: Book II starts, renders in the headset,
   tracks your head, takes controller input (triggers, sticks, buttons) and plays audio, and gets past the
