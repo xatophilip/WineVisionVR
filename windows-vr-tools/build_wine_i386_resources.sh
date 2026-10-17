@@ -7,14 +7,84 @@ if [[ "${AVPPLAY_ALLOW_RUNTIME_BUILD:-0}" != 1 || "${AVPPLAY_BUILD_WINE_I386:-0}
     echo 'Set AVPPLAY_ALLOW_RUNTIME_BUILD=1 and AVPPLAY_BUILD_WINE_I386=1.' >&2; exit 1
 fi
 if [[ -z "$runtime_root" || "$runtime_root" != /* || ! -f "$runtime_root/AVPPLAY_SOURCE_PROVENANCE.json" ]]; then
-    echo 'Set AVPPLAY_I386_RUNTIME_SOURCE to a separate prepared legacy Madeira source tree.' >&2; exit 1
+    echo 'Set AVPPLAY_I386_RUNTIME_SOURCE to a separate prepared Madeira source tree.' >&2; exit 1
 fi
 if [[ -n "${AVPPLAY_RUNTIME_SOURCE:-}" && "$(cd "$runtime_root" && pwd -P)" == "$(cd "$AVPPLAY_RUNTIME_SOURCE" && pwd -P)" && "${AVPPLAY_ALLOW_I386_ACTIVE_CANDIDATE:-0}" != 1 ]]; then
     echo 'The experimental i386 source must be separate from AVPPLAY_RUNTIME_SOURCE.' >&2; exit 1
 fi
-if [[ -f "$runtime_root/AVPPLAY_D3D12_SOURCE_PROVENANCE.json" ]] || grep -q '^#define WVR_DXMT_D3D12_PROFILE 1' "$runtime_root/build/ntdll-unix/virtual_ios.c"; then
-    echo 'Modern DXMT rejects Madeira WOW64 pointers. Use a matching legacy Madeira source/native candidate.' >&2; exit 1
+modern=0
+if [[ -f "$runtime_root/AVPPLAY_D3D12_SOURCE_PROVENANCE.json" ]]; then
+    modern=1
+elif grep -q '^#define WVR_DXMT_D3D12_PROFILE 1' "$runtime_root/build/ntdll-unix/virtual_ios.c"; then
+    echo 'Modern native source requires its complete receipt-backed source profile.' >&2; exit 1
 fi
+phase="${AVPPLAY_I386_BUILD_PHASE:-all}"
+# These Wine providers satisfy imports of optional diagnostic/media modules.
+# They do not replace modern DXMT or imply D3D9/D3D10 rendering support.
+stage_modern_optional_wine_providers() {
+    local targets=(dlls/d3d10core/i386-windows/d3d10core.dll dlls/d3d9/i386-windows/d3d9.dll)
+    python3 - "$runtime_root" "$AVPPLAY_LLVM_MINGW_ROOT" "$JOBS" "${targets[@]}" <<'PYOPTIONAL'
+import hashlib, json, shutil, struct, subprocess, sys
+from pathlib import Path
+root, toolchain = map(Path, sys.argv[1:3])
+jobs, targets = sys.argv[3], sys.argv[4:]
+farm = root/'app/Madeira/i386-windows'
+modern = ('d3d11.dll', 'd3d12.dll', 'dxgi.dll', 'winemetal.dll')
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+def machine(path):
+    with path.open('rb') as stream:
+        dos = stream.read(64)
+        if len(dos) != 64 or dos[:2] != b'MZ': return None
+        offset = struct.unpack_from('<I', dos, 60)[0]
+        if offset < 64 or offset > path.stat().st_size - 6: return None
+        stream.seek(offset); pe = stream.read(6)
+        return struct.unpack_from('<H', pe, 4)[0] if pe[:4] == b'PE\0\0' else None
+preserved = {name:sha(farm/name) for name in modern if (farm/name).exists()}
+subprocess.run(['make', '-C', str(root/'wine/build-i386'), '-j'+jobs, *targets], check=True)
+providers = []
+for target in targets:
+    source = root/'wine/build-i386'/target
+    if source.is_symlink() or not source.is_file() or machine(source) != 0x14c:
+        raise SystemExit('Optional Wine provider is not a fresh regular i386 build: ' + target)
+    output = farm/Path(target).name
+    temporary = output.with_suffix(output.suffix+'.tmp')
+    if temporary.exists() or temporary.is_symlink():
+        raise SystemExit('Refusing an existing optional-provider temporary file: ' + str(temporary))
+    try:
+        shutil.copy2(source, temporary)
+        subprocess.run([str(toolchain/'bin/i686-w64-mingw32-strip'), '--strip-debug', str(temporary)], check=True)
+        if machine(temporary) != 0x14c:
+            raise SystemExit('Stripped optional provider has the wrong PE architecture: ' + target)
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    providers.append(dict(sourceTarget=target, buildSha256=sha(source), packagedSha256=sha(output)))
+if preserved != {name:sha(farm/name) for name in preserved}:
+    raise SystemExit('Building optional Wine providers changed the modern DXMT graphics closure.')
+report = dict(schemaVersion=1, sourceProvenanceSha256=sha(root/'AVPPLAY_SOURCE_PROVENANCE.json'),
+              buildDirectory='wine/build-i386', targets=providers,
+              preservedModernGraphicsSha256=preserved,
+              scope='Same-Wine import providers only; no D3D9 or D3D10 graphics capability is advertised')
+(root/'build/i386-optional-wine-providers.json').write_text(json.dumps(report, indent=2)+'\n')
+PYOPTIONAL
+}
+
+if [[ "$modern" == 1 ]]; then
+    python3 - "$runtime_root" <<'PYMODERN'
+import json, sys
+from pathlib import Path
+source=json.loads((Path(sys.argv[1])/'AVPPLAY_D3D12_SOURCE_PROVENANCE.json').read_text())
+if source.get('wow64TransportABI') != 1 or source.get('wow64DispatchTableExpectedEntryCount') != 148:
+    raise SystemExit('Prepare a modern profile with the complete 148-entry WOW64 transport before building x86 resources.')
+PYMODERN
+    if [[ "$phase" == all ]]; then
+        echo 'Modern x86 builds require phase=base before modern DXMT and phase=validate after its i386 DLL build.' >&2; exit 1
+    fi
+fi
+# Validation is deliberately separate: modern DXMT uses the freshly configured
+# i386 Wine import libraries, then its DLLs complete this farm before publication.
+if [[ "$phase" != validate ]]; then
 if [[ -z "${AVPPLAY_LLVM_MINGW_ROOT:-}" || "$AVPPLAY_LLVM_MINGW_ROOT" != /* || ! -d "$AVPPLAY_LLVM_MINGW_ROOT" ]]; then
     echo 'Set AVPPLAY_LLVM_MINGW_ROOT to the pinned external LLVM-MinGW distribution.' >&2; exit 1
 fi
@@ -82,8 +152,8 @@ if [[ "${AVPPLAY_I386_BUILD_PHASE:-all}" == wow64-helpers ]]; then
     echo 'Fresh matching aarch64 ntdll/wow64/wow64win helpers built.'
     exit 0
 fi
-if [[ "${AVPPLAY_I386_BUILD_PHASE:-all}" != all && "${AVPPLAY_I386_BUILD_PHASE:-all}" != wow64-closure ]]; then
-    echo 'Unknown AVPPLAY_I386_BUILD_PHASE; use all, wow64-helpers, or wow64-closure.' >&2; exit 1
+if [[ "$phase" != all && "$phase" != base && "$phase" != wow64-closure ]]; then
+    echo 'Unknown AVPPLAY_I386_BUILD_PHASE; use all, base, validate, wow64-helpers, or wow64-closure.' >&2; exit 1
 fi
 # WoW64's native half can load additional ARM64 providers even when the game
 # itself is i386. Build the actual Wine targets for the complete imports,
@@ -159,7 +229,12 @@ cmake -S "$runtime_root/FEX" -B "$runtime_root/FEX/build-wow64" -G Ninja -DCMAKE
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DOVERRIDE_VERSION="FEX-${fex_hash:0:7}" -DOVERRIDE_HASH="$fex_hash"
 # Both scripts build their own architecture-specific trees; no working caches are reused.
 bash "$runtime_root/build/fex-wow64/build.sh"
-bash "$runtime_root/build/wine-i386/build.sh"
+if [[ "$modern" == 1 ]]; then
+    SKIP_DXMT=1 bash "$runtime_root/build/wine-i386/build.sh"
+    stage_modern_optional_wine_providers
+else
+    bash "$runtime_root/build/wine-i386/build.sh"
+fi
 # The WOW64 translator uses the toolchain's native aarch64 C++ runtime.
 for name in libc++.dll libunwind.dll; do
     cp "$AVPPLAY_LLVM_MINGW_ROOT/aarch64-w64-mingw32/bin/$name" "$runtime_root/app/Madeira/aarch64-windows/$name"
@@ -171,6 +246,11 @@ fixture_dir="$runtime_root/build/i386-fixtures"
 mkdir -p "$fixture_dir"
 "$AVPPLAY_LLVM_MINGW_ROOT/bin/i686-w64-mingw32-clang" -O2 -g -nostdlib -Wl,--entry=_start \
     -o "$fixture_dir/hello-x86.exe" "$runtime_root/tests/x86/hello-x86.c" -lkernel32
+if [[ "$phase" == base ]]; then
+    echo 'Fresh i386 Wine and ARM64 WOW64/FEX core built; graphics closure and final receipt remain unvalidated.'
+    exit 0
+fi
+fi # phase != validate
 python3 - "$runtime_root" "$repo_root" "$AVPPLAY_LLVM_MINGW_ROOT" <<'PY'
 import hashlib, json, re, struct, subprocess, sys
 from pathlib import Path
@@ -178,6 +258,12 @@ root, repo, toolchain = map(Path, sys.argv[1:])
 farm = root / 'app/Madeira/i386-windows'
 files = sorted(p for p in farm.iterdir() if p.is_file() and not p.name.startswith('.'))
 required = {'ntdll.dll','kernel32.dll','kernelbase.dll','user32.dll','gdi32.dll','win32u.dll','apisetschema.dll','d3d11.dll','dxgi.dll','d3d10core.dll','winemetal.dll'}
+modern=(root/'AVPPLAY_D3D12_SOURCE_PROVENANCE.json').is_file()
+if modern:
+    required.discard('d3d10core.dll'); required.add('d3d12.dll')
+    sys.path.insert(0, str(repo/'windows-vr-tools'))
+    from resource_receipt import validate_modern_wow64
+    validate_modern_wow64(root, root/'app/Madeira')
 names = {p.name.casefold() for p in files}
 missing = sorted(required - names)
 if missing: raise SystemExit('Missing required i386 files: ' + ', '.join(missing))
@@ -201,7 +287,7 @@ for name in ('wow64.dll','wow64win.dll','xtajit.dll','ntdll.dll','libc++.dll','l
     p = root/'app/Madeira/aarch64-windows'/name
     if machine(p) != 0xaa64: raise SystemExit('Missing/wrong aarch64 WOW64 dependency: ' + str(p))
 report = {'schemaVersion':1, 'status':'experimental-guest-components-built-not-device-tested',
-          'requiresMatchingLegacyNativeArchive':True, 'runtimeSource':str(root),
+          'requiresMatchingLegacyNativeArchive':not modern, 'modernWow64TransportABI':1 if modern else None, 'runtimeSource':str(root),
           'wineI386FileCount':len(files), 'missingImports':imports_missing,
           'resourcesSha256':{p.name:sha(p) for p in files},
           'wow64Sha256':{name:sha(root/'app/Madeira/aarch64-windows'/name) for name in ('wow64.dll','wow64win.dll','xtajit.dll','ntdll.dll','libc++.dll','libunwind.dll')},

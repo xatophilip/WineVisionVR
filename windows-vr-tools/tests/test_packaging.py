@@ -290,18 +290,79 @@ class X86PackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "ARM64 PE"):
             receipt.fex_wow64_build(self.root / "runtime", self.source)
 
-    def test_modern_native_dxmt_profile_cannot_be_mixed_with_wow64(self):
+    def test_modern_wow64_requires_complete_profile_and_build_receipt(self):
         marker = self.root / "runtime/AVPPLAY_D3D12_SOURCE_PROVENANCE.json"
         marker.parent.mkdir()
         marker.write_text("{}")
-        with self.assertRaisesRegex(SystemExit, "legacy Madeira"):
+        with self.assertRaisesRegex(SystemExit, "Modern WOW64"):
             receipt.fex_wow64_build(self.root / "runtime", self.source)
         marker.unlink()
         native = self.root / "runtime/build/ntdll-unix/virtual_ios.c"
         native.parent.mkdir(parents=True)
         native.write_text("#define WVR_DXMT_D3D12_PROFILE 1\n")
-        with self.assertRaisesRegex(SystemExit, "legacy Madeira"):
+        with self.assertRaisesRegex(SystemExit, "Modern WOW64"):
             receipt.fex_wow64_build(self.root / "runtime", self.source)
+
+    def modern_wow64_fixture(self):
+        runtime = self.root / "runtime"
+        archive = runtime / "app/Madeira/libdxmt_d3d12_combined.a"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(b"!<arch>\nfixture native archive")
+        source = {"schemaVersion": 1,
+                  "profileId": "dxmt-d3d12-experimental-e94c312f5c054263acf261cfa109edf13e757587",
+                  "wow64TransportABI": 1, "wow64DispatchTableExpectedEntryCount": 148}
+        source_path = runtime / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json"
+        source_path.write_text(json.dumps(source))
+        artifacts = {"native/libdxmt_d3d12_combined.a": receipt.sha256_file(archive)}
+        for name in receipt.MODERN_X86_DLLS:
+            file = self.pe(self.source / "i386-windows" / name, 0x14c)
+            artifacts[f"guest/i386-windows/{name}"] = receipt.sha256_file(file)
+        build = {**source, "sourceProvenanceSha256": receipt.sha256_file(source_path),
+                 "exportedDispatchSymbols": receipt.MODERN_WOW64_SYMBOLS,
+                 "artifactsSha256": artifacts}
+        build_path = runtime / "AVPPLAY_D3D12_BUILD_RECEIPT.json"
+        build_path.write_text(json.dumps(build))
+        self.pe(runtime / "FEX/build-wow64/Bin/libwow64fex.dll", 0xaa64)
+        self.pe(self.source / "aarch64-windows/xtajit.dll", 0xaa64)
+        return runtime, source_path, build_path
+
+    def test_modern_wow64_binds_native_transport_and_all_four_i386_dlls(self):
+        runtime, _, _ = self.modern_wow64_fixture()
+        result = receipt.x86_build(runtime, self.source)
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["modernDXMT"]["transportABI"], 1)
+        self.assertEqual(set(result["modernDXMT"]["guestArtifactsSha256"]), set(receipt.MODERN_X86_DLLS))
+        self.assertEqual(result["fexWow64Translator"]["sha256"], receipt.sha256_file(runtime / "FEX/build-wow64/Bin/libwow64fex.dll"))
+
+    def test_modern_wow64_rejects_missing_capability_and_stale_binary_bytes(self):
+        runtime, source_path, build_path = self.modern_wow64_fixture()
+        original = build_path.read_text()
+        for key, value in (("wow64TransportABI", True), ("wow64TransportABI", 0),
+                           ("wow64DispatchTableExpectedEntryCount", 147), ("exportedDispatchSymbols", [])):
+            with self.subTest(field=key, value=value):
+                build = json.loads(original); build[key] = value
+                build_path.write_text(json.dumps(build))
+                with self.assertRaises(SystemExit):
+                    receipt.validate_modern_wow64(runtime, self.source)
+        build_path.write_text(original)
+        archive = runtime / "app/Madeira/libdxmt_d3d12_combined.a"
+        archive.write_bytes(archive.read_bytes() + b"stale")
+        with self.assertRaisesRegex(SystemExit, "archive differs"):
+            receipt.validate_modern_wow64(runtime, self.source)
+
+    def test_modern_wow64_rejects_legacy_or_wrong_arch_graphics_substitutions(self):
+        runtime, _, _ = self.modern_wow64_fixture()
+        for name in receipt.MODERN_X86_DLLS:
+            path = self.source / "i386-windows" / name
+            original = path.read_bytes()
+            with self.subTest(file=name):
+                path.write_bytes(original + b"legacy different DXMT")
+                with self.assertRaisesRegex(SystemExit, "fresh DXMT build receipt"):
+                    receipt.validate_modern_wow64(runtime, self.source)
+                self.pe(path, 0x8664)
+                with self.assertRaisesRegex(SystemExit, "actual i386"):
+                    receipt.validate_modern_wow64(runtime, self.source)
+                path.write_bytes(original)
 
     def test_i386_imports_cover_guest_bridges_and_export_forwarders(self):
         core = self.source / "i386-windows/kernel32.dll"

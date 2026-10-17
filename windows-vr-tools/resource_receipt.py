@@ -104,12 +104,79 @@ def fex_translator_build(runtime_root, resource_source):
     }
 
 
+MODERN_WOW64_SYMBOLS = [
+    "_wvr_dxmt_wow64_transport_abi_v1", "_wvr_dxmt_wow64_unix_call_count_v1",
+]
+MODERN_X86_DLLS = ("d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll")
+
+
+def modern_profile(runtime_root):
+    marker = runtime_root / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json"
+    native = runtime_root / "build/ntdll-unix/virtual_ios.c"
+    if marker.exists():
+        return True
+    if native.is_file() and "#define WVR_DXMT_D3D12_PROFILE 1" in native.read_text():
+        fail("Modern WOW64 requires a complete source profile and receipt-bound transport.")
+    return False
+
+
+def validate_modern_wow64(runtime_root, resource_source):
+    """Bind the new native transport and i386 DLLs to their actual source build.
+
+    A renamed legacy DLL or an older modern archive exporting the placeholder
+    WOW64 table cannot satisfy this capability contract.
+    """
+    source_path = runtime_root / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json"
+    build_path = runtime_root / "AVPPLAY_D3D12_BUILD_RECEIPT.json"
+    source = read_json(source_path, "Modern WOW64 source profile")
+    build = read_json(build_path, "Modern WOW64 DXMT build receipt")
+    pin = "dxmt-d3d12-experimental-e94c312f5c054263acf261cfa109edf13e757587"
+    for value, label in ((source, "source"), (build, "build")):
+        if (value.get("profileId") != pin or type(value.get("wow64TransportABI")) is not int
+                or value["wow64TransportABI"] != 1
+                or type(value.get("wow64DispatchTableExpectedEntryCount")) is not int
+                or value["wow64DispatchTableExpectedEntryCount"] != 148):
+            fail(f"Modern WOW64 {label} lacks the complete 148-entry transport capability.")
+    if build.get("sourceProvenanceSha256") != sha256_file(source_path):
+        fail("Modern WOW64 DXMT build belongs to a different source profile.")
+    if not set(MODERN_WOW64_SYMBOLS).issubset(build.get("exportedDispatchSymbols", [])):
+        fail("Modern WOW64 archive receipt lacks its real transport capability exports.")
+    artifacts = build.get("artifactsSha256", {})
+    archive = runtime_root / "app/Madeira/libdxmt_d3d12_combined.a"
+    ensure_regular_nonempty(archive, "Modern WOW64 native DXMT archive")
+    with archive.open("rb") as stream:
+        archive_magic = stream.read(8)
+    if archive_magic != b"!<arch>\n" or artifacts.get("native/libdxmt_d3d12_combined.a") != sha256_file(archive):
+        fail("Modern WOW64 native archive differs from its build receipt.")
+    generic = runtime_root / "app/Madeira/libdxmt_combined.a"
+    if generic.exists() and sha256_file(generic) != sha256_file(archive):
+        fail("Modern WOW64 native and generic resource archives differ.")
+    guests = {}
+    for name in MODERN_X86_DLLS:
+        path = resource_source / "i386-windows" / name
+        ensure_regular_nonempty(path, "Modern WOW64 i386 graphics DLL")
+        if pe_machine(path) != 0x14c:
+            fail(f"Modern WOW64 graphics requires actual i386 DLLs: {name}")
+        actual = sha256_file(path)
+        if artifacts.get(f"guest/i386-windows/{name}") != actual:
+            fail(f"Modern WOW64 {name} differs from its fresh DXMT build receipt.")
+        guests[name] = actual
+    return {"transportABI": 1, "unixCallCount": 148,
+            "sourceProvenanceSha256": sha256_file(source_path),
+            "buildReceiptSha256": sha256_file(build_path),
+            "nativeArchiveSha256": sha256_file(archive), "guestArtifactsSha256": guests}
+
+
+def x86_build(runtime_root, resource_source):
+    result = {"enabled": True, "fexWow64Translator": fex_wow64_build(runtime_root, resource_source)}
+    if modern_profile(runtime_root):
+        result["modernDXMT"] = validate_modern_wow64(runtime_root, resource_source)
+    return result
+
+
 def fex_wow64_build(runtime_root, resource_source):
-    if (runtime_root / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json").exists():
-        fail("WOW64 requires a matching legacy Madeira native runtime; modern DXMT does not support its pointer transport.")
-    native_source = runtime_root / "build/ntdll-unix/virtual_ios.c"
-    if native_source.is_file() and "#define WVR_DXMT_D3D12_PROFILE 1" in native_source.read_text():
-        fail("WOW64 requires a matching legacy Madeira native runtime; modern DXMT does not support its pointer transport.")
+    if modern_profile(runtime_root):
+        validate_modern_wow64(runtime_root, resource_source)
     build_relative = "FEX/build-wow64/Bin/libwow64fex.dll"
     guest_relative = "aarch64-windows/xtajit.dll"
     build_artifact = runtime_root / build_relative
@@ -293,7 +360,7 @@ def write_guest(args):
     if enable_x86:
         from stage_resources import validate_wine_resources
         validate_wine_resources(source, True)
-        receipt["guest"]["x86"] = {"enabled": True, "fexWow64Translator": fex_wow64_build(runtime_root, source)}
+        receipt["guest"]["x86"] = x86_build(runtime_root, source)
     output = args.output.absolute() if args.output else source / GUEST_RECEIPT_NAME
     write_json_atomic(output, receipt)
     print(f"Recorded Windows guest resource provenance at {output}")
@@ -332,7 +399,7 @@ def validate_receipts(source, runtime_root, native_receipt_path, enable_x86=Fals
     if not isinstance(expected_files, dict) or expected_files != actual_files:
         fail("Windows guest resource files do not match their recorded build receipt.")
     if enable_x86:
-        expected_x86 = {"enabled": True, "fexWow64Translator": fex_wow64_build(runtime_root, source)}
+        expected_x86 = x86_build(runtime_root, source)
         if guest.get("guest", {}).get("x86") != expected_x86:
             fail("Windows guest receipt does not bind the enabled WOW64 FEX translator to its fresh build output.")
     elif "x86" in guest.get("guest", {}):

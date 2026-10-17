@@ -29,6 +29,10 @@ def main():
                         help='OpenComposite source with this repository\'s patches applied')
     parser.add_argument('--madeira-source', type=Path,
                         help='clean pinned Madeira checkout (default: third-party/madeira); not the patched overlay')
+    parser.add_argument('--runtime-source', type=Path,
+                        help='prepared Madeira overlay for child-GDI/JIT tests (or AVPPLAY_RUNTIME_SOURCE)')
+    parser.add_argument('--dxmt-modern-wow64-source', type=Path,
+                        help='modern DXMT with WOW64 patch 0025 (or AVPPLAY_D3D12_PROFILE_SOURCE/dxmt)')
     parser.add_argument('--simulator', metavar='UDID',
                         help='also run GPU/audio probes on an already booted visionOS 27 simulator')
     parser.add_argument('--skip-visionos-build', action='store_true',
@@ -90,6 +94,11 @@ def main():
                                   '--build', build / 'steam-download-sizes'])
     run('graphics-profile-link', [python, 'windows-runtime-plugin/Tests/test_graphics_profile_link.py',
                                   '--build', build / 'graphics-profile-link'])
+    if env.get('AVPPLAY_LLVM_MINGW_ROOT') and (Path(env['AVPPLAY_LLVM_MINGW_ROOT']) / 'bin/i686-w64-mingw32-clang').is_file():
+        run('desktop-demo-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_demo_selection.py',
+                                      '--build', build / 'desktop-demo-selection'])
+    else:
+        skip('desktop-demo-selection', 'Set AVPPLAY_LLVM_MINGW_ROOT to compile real x64/i386 fixture executables')
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
                                     '--build', build / 'desktop-contract'])
     run('guest-runtime-mapping', [python, 'windows-runtime-plugin/Tests/test_guest_runtime_mapping.py',
@@ -130,6 +139,38 @@ def main():
                                       '--source', madeira])
     else:
         skip('runtime-source-repairs', 'fetch the clean pinned Madeira checkout first')
+
+    runtime_source = args.runtime_source or env.get('AVPPLAY_RUNTIME_SOURCE')
+    if runtime_source:
+        runtime_source = Path(runtime_source).expanduser().resolve()
+        run('child-gdi-publication', [python, 'windows-runtime-plugin/Tests/test_child_gdi_publication.py',
+                                      '--runtime-source', runtime_source,
+                                      '--build', build / 'child-gdi-publication'])
+        run('jit-pool-arbitration', [python, 'windows-vr-openxr/tests/test_jit_pool_arbitration.py',
+                                     '--runtime-source', runtime_source,
+                                     '--output-dir', build / 'jit-pool-arbitration'])
+    else:
+        skip('child-gdi-publication', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+        skip('jit-pool-arbitration', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+
+    modern_source = args.dxmt_modern_wow64_source
+    if modern_source is None and env.get('AVPPLAY_D3D12_PROFILE_SOURCE'):
+        modern_source = Path(env['AVPPLAY_D3D12_PROFILE_SOURCE']) / 'dxmt'
+    if modern_source:
+        modern_source = Path(modern_source).expanduser().resolve()
+        run('modern-wow64-transport', [python, 'windows-vr-openxr/tests/test_modern_wow64_transport.py',
+                                       '--dxmt-source', modern_source,
+                                       '--output-dir', build / 'modern-wow64-transport'])
+        mingw = env.get('AVPPLAY_LLVM_MINGW_ROOT')
+        if mingw and (Path(mingw) / 'bin/i686-w64-mingw32-clang').is_file():
+            run('modern-wow64-layout', [python, 'windows-vr-openxr/tests/test_modern_wow64_layout.py',
+                                        '--dxmt-source', modern_source, '--llvm-mingw-root', mingw,
+                                        '--build', build / 'modern-wow64-layout'])
+        else:
+            skip('modern-wow64-layout', 'Set AVPPLAY_LLVM_MINGW_ROOT to compare actual i386 and visionOS record layouts')
+    else:
+        skip('modern-wow64-transport', '--dxmt-modern-wow64-source or AVPPLAY_D3D12_PROFILE_SOURCE not supplied')
+        skip('modern-wow64-layout', '--dxmt-modern-wow64-source or AVPPLAY_D3D12_PROFILE_SOURCE not supplied')
 
     if args.dxmt_source:
         source = args.dxmt_source.expanduser().resolve()

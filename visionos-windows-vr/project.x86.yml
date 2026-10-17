@@ -19,3 +19,6 @@ targets:
       - path: Resources/VRSmokeX86
         type: folder
         buildPhase: resources
+      - path: Resources/DesktopDemoX86
+        type: folder
+        buildPhase: resources

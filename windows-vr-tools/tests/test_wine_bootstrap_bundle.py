@@ -1,5 +1,6 @@
 """Check the loader paths that failed during the first physical desktop launch."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -30,12 +31,21 @@ class WineBootstrapBundleTests(unittest.TestCase):
         for filename in ("crypt32.dll", "cryptbase.dll", "rsaenh.dll", "psapi.dll", "imm32.dll"):
             (self.app / "Runtime/arm64ec-windows" / filename).write_bytes(b"crypto fixture")
 
-    def verify(self):
+    def verify(self, x86=False):
+        # These fixtures explicitly model a 64-bit-only package. A developer's
+        # experimental build environment must not change the selected contract.
+        env = {**os.environ, "AVPPLAY_ENABLE_X86": "1" if x86 else "0"}
         return subprocess.run(["bash", str(VERIFY), str(self.app)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, env=env)
 
     def copy_loader_tables(self):
         shutil.copytree(self.app / "Runtime/nls", self.app / "nls")
+
+    def test_x86_opt_in_requires_actual_i386_bootstrap(self):
+        self.copy_loader_tables()
+        result = self.verify(x86=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("i386-windows/ntdll.dll", result.stderr)
 
     def test_runtime_only_tables_reproduce_failed_packaging(self):
         result = self.verify()

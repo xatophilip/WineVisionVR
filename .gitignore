@@ -18,7 +18,7 @@
 # Their revisions and licenses are recorded separately; do not add embedded Git repos.
 /third-party/madeira/
 /third-party/openvr/
-/third-party/openxr/
+/third-party/openxr
 /third-party/alvr-visionos/
 /third-party/opencomposite/
 /third-party/freetype/
@@ -28,6 +28,7 @@
 /visionos-windows-vr/Resources/Runtime/
 /visionos-windows-vr/Resources/WindowsVR/
 /visionos-windows-vr/Resources/DesktopDemo/
+/visionos-windows-vr/Resources/DesktopDemoX86/
 /visionos-windows-vr/Resources/arm64ec-windows/
 /visionos-windows-vr/.compile-only.yml
 /visionos-windows-vr/Generated-Info.plist

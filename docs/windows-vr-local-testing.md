@@ -448,6 +448,10 @@ games or establish background execution while visionOS suspends the app.
 
 ### Experimental 32-bit Windows support
 
+The historical legacy results below are preserved for comparison. The isolated
+modern source port and its current validation limits are recorded in
+[Modern 32-bit development status](windows-vr-modern-32bit.md).
+
 Audioshield (Steam app 412740) installs an i386 executable. Its captured Steam
 metadata lists only the Windows VR `Audioshield.exe` launch option. The working
 Windlands build did not include an i386 Wine farm or x86 VR bridge.

@@ -10,7 +10,7 @@ STAGE_ROOT="${AVPPLAY_D3D12_STAGE_ROOT:-}"
 [[ "${AVPPLAY_ENABLE_D3D12:-0}" == 1 ]] || { echo "Set AVPPLAY_ENABLE_D3D12=1 to stage D3D12 resources." >&2; exit 1; }
 [[ "$STAGE_ROOT" == /* ]] || { echo "Set AVPPLAY_D3D12_STAGE_ROOT to a fresh absolute path." >&2; exit 1; }
 python3 - "$ROOT" "$PROFILE" "$ADAPTATION" "$BUILD_RECEIPT" "$NATIVE_ARCHIVE" "$STAGE_ROOT" <<'PY'
-import hashlib, json, pathlib, shutil, sys, tempfile
+import hashlib, json, os, pathlib, shutil, sys, tempfile
 root, profile, adaptation_path, build_path, archive, stage_root = map(pathlib.Path, sys.argv[1:])
 
 def fail(message): raise SystemExit(message)
@@ -36,10 +36,22 @@ profile_id="dxmt-d3d12-experimental-e94c312f5c054263acf261cfa109edf13e757587"
 if source.get("profileId") != profile_id or source.get("sourceRevision") != "e94c312f5c054263acf261cfa109edf13e757587": fail("Unexpected D3D12 source profile pin.")
 if adaptation.get("schemaVersion") != 1 or adaptation.get("profileId") != profile_id or adaptation.get("sourceProvenanceSha256") != sha(source_path): fail("Source adaptation receipt is missing or stale.")
 if build.get("schemaVersion") != 1 or build.get("profileId") != profile_id or build.get("sourceProvenanceSha256") != sha(source_path) or build.get("nativeAdaptationReceiptSha256") != sha(adaptation_path): fail("D3D12 build receipt does not match the source/adaptation receipts.")
-if source.get("unixCallTable",{}).get("expectedEntryCount") != 148 or build.get("dispatchTableExpectedEntryCount") != 148 or build.get("exportedDispatchSymbols") != ["_dxmt_winemetal_unix_call_funcs","_dxmt_winemetal_unix_call_wow64_funcs","_wvr_dxmt_d3d12_unix_call_count_v1","_wvr_dxmt_d3d12_transport_abi_v1"]: fail("D3D12 dispatch table exports/count contract do not match the embedded Wine profile.")
+expected_symbols = ["_dxmt_winemetal_unix_call_funcs", "_dxmt_winemetal_unix_call_wow64_funcs",
+                    "_wvr_dxmt_d3d12_unix_call_count_v1", "_wvr_dxmt_d3d12_transport_abi_v1"]
+if source.get("wow64TransportABI") == 1:
+    if (source.get("wow64DispatchTableExpectedEntryCount") != 148 or
+            build.get("wow64TransportABI") != 1 or build.get("wow64DispatchTableExpectedEntryCount") != 148):
+        fail("Modern WOW64 source/build transport capability differs.")
+    expected_symbols += ["_wvr_dxmt_wow64_transport_abi_v1", "_wvr_dxmt_wow64_unix_call_count_v1"]
+elif source.get("wow64TransportABI") is not None:
+    fail("Unsupported modern WOW64 source transport ABI.")
+if (source.get("unixCallTable", {}).get("expectedEntryCount") != 148 or
+        build.get("dispatchTableExpectedEntryCount") != 148 or build.get("exportedDispatchSymbols") != expected_symbols):
+    fail("D3D12 dispatch table exports/count contract do not match the embedded Wine profile.")
 if build.get("nativeSourceTreeSha256") != source.get("nativeSourceTreeSha256") or build.get("unixCallTable") != source.get("unixCallTable") or build.get("transportABI") != source.get("transportABI"): fail("D3D12 build uses a different source tree or transport/table ABI.")
 inputs=source.get("integrationInputsSha256",{})
 required={
+ "windows-vr-tools/build_wine_i386_resources.sh","windows-vr-tools/build_wine_guest_resources.sh","windows-vr-tools/resource_receipt.py","windows-vr-tools/verify_wine_bundle.sh",
  "windows-vr-openxr/patches/0002-dxmt-d3d12-wvr-queue.patch","windows-vr-openxr/patches/0003-dxmt-d3d12-visionos-native.patch","windows-vr-openxr/patches/0004-dxmt-modern-d3d11-wvr.patch","windows-vr-openxr/patches/0005-dxmt-xros-metallib-target.patch",
  "windows-vr-openxr/patches/0006-dxmt-arm64ec-native-build.patch","windows-runtime-plugin/d3d12/0001-embedded-dxmt-dispatch.patch",
  "windows-vr-openxr/patches/0007-dxmt-xros-air-container-validation.patch",
@@ -57,6 +69,8 @@ required={
  "windows-vr-openxr/patches/0020-dxmt-cooperative-query-polling.patch",
  "windows-vr-openxr/patches/0021-dxmt-notified-query-progress.patch", "windows-vr-openxr/patches/0022-dxmt-batched-uniform-bindings.patch", "windows-vr-openxr/patches/0023-dxmt-progress-retry-contract.patch",
  "windows-vr-openxr/patches/0024-dxmt-explicit-scene-depth.patch",
+ "windows-vr-openxr/patches/0025-dxmt-modern-wow64-transport.patch",
+ "windows-vr-openxr/include/WindowsVRWOW64Transport.h",
  "windows-vr-native/include/WindowsVRReconstruction.h",
  "windows-vr-openxr/include/WindowsVRD3D11ContextExt.h","windows-vr-openxr/include/WindowsVRD3D12CommandQueueExt.h","windows-vr-openxr/include/WindowsVRWMTBridge.h",
  "windows-vr-native/include/WindowsVRCompositorBridge.h","windows-vr-native/include/WindowsVRGuestFoveation.h","windows-vr-ngx/src/WVRMetalFXWMTBridge.h","windows-vr-ngx/src/WVRMetalFXWMTBridge.inc","windows-vr-ngx/include/WindowsVRNGX.h",
@@ -91,28 +105,49 @@ for name in ("d3d11.dll","d3d12.dll","dxgi.dll","winemetal.dll"):
     if artifacts.get(f"guest/arm64ec-windows/{name}") != sha(path): fail(f"ARM64EC {name} does not match the same-source build receipt.")
     dll_hashes[name]=sha(path)
     sys.path.insert(0,str(root/"windows-vr-tools"))
-from stage_resources import is_arm64ec_pe
+from stage_resources import is_arm64ec_pe, pe_machine
     
 for name in dll_hashes:
     if not is_arm64ec_pe(source_dlls/name): fail(f"{name} is not an ARM64EC PE or valid AMD64+CHPE Wine builtin.")
+x86_names = ("d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll")
+x86_source = profile / "app/Madeira/i386-windows"
+x86_hashes = {name: artifacts.get(f"guest/i386-windows/{name}") for name in x86_names}
+x86_present = any(value is not None for value in x86_hashes.values())
+if os.environ.get("AVPPLAY_ENABLE_X86", "0") == "1" and not x86_present:
+    fail("x86 staging requires all four same-source modern i386 graphics DLLs in the build receipt.")
+if x86_present:
+    if source.get("wow64TransportABI") != 1 or source.get("wow64DispatchTableExpectedEntryCount") != 148:
+        fail("Modern i386 graphics lack a matching source-bound 148-slot WOW64 transport.")
+    for name, expected in x86_hashes.items():
+        path = x86_source / name
+        if not expected or sha(path) != expected or pe_machine(path) != 0x14c:
+            fail(f"Modern i386 {name} does not match its same-source graphics build receipt/architecture.")
 if stage_root.exists(): fail(f"Refusing to replace existing D3D12 stage: {stage_root}")
 stage_root.parent.mkdir(parents=True,exist_ok=True)
 staging=pathlib.Path(tempfile.mkdtemp(prefix=".d3d12-stage-",dir=stage_root.parent))
 try:
     guest=staging/"Runtime/arm64ec-windows"; guest.mkdir(parents=True)
     for name in dll_hashes: shutil.copy2(source_dlls/name,guest/name)
+    if x86_present:
+        x86_guest = staging / "Runtime/i386-windows"; x86_guest.mkdir(parents=True)
+        for name in x86_names: shutil.copy2(x86_source/name, x86_guest/name)
     win=staging/"WindowsVR"; exp=win/"D3D12Experimental"; exp.mkdir(parents=True)
     shutil.copy2(source_path,exp/"AVPPLAY_D3D12_SOURCE_PROVENANCE.json")
     shutil.copy2(adaptation_path,exp/"AVPPLAY_D3D12_NATIVE_ADAPTATION_RECEIPT.json")
     shutil.copy2(build_path,exp/"AVPPLAY_D3D12_BUILD_RECEIPT.json")
     capabilities={"schemaVersion":1,"direct3D11":True,"direct3D12":True,"d3d12TransportABI":1,"sourceProfileId":profile_id,"sourceRevision":source["sourceRevision"],"sourceProfileReceiptSha256":sha(source_path)}
+    if x86_present:
+        capabilities.update(x86Direct3D11=True, wow64TransportABI=1, wow64DispatchTableExpectedEntryCount=148)
     cap=win/"GraphicsCapabilities.json"; cap.write_text(json.dumps(capabilities,separators=(",",":"))+"\n",encoding="utf-8")
     profile_receipt={"schemaVersion":1,"profileId":profile_id,"sourceRevision":source["sourceRevision"],"madeiraBaselineRevision":source["madeiraBaselineRevision"],"llvmSourceRevision":source["llvmSourceRevision"],"sourceProvenanceSha256":sha(source_path),"nativeAdaptationReceiptSha256":sha(adaptation_path),"buildReceiptSha256":sha(build_path),"nativeArchiveName":"libdxmt_d3d12_combined.a","nativeArchiveSha256":sha(archive),"nativeSourceTreeSha256":source["nativeSourceTreeSha256"],"unixCallTable":source["unixCallTable"],"transportABI":source["transportABI"],"guestArtifactsSha256":dll_hashes,"graphicsCapabilitiesSha256":sha(cap),"supportLevel":"source-matched-build-receipt"}
+    if x86_present:
+        profile_receipt.update(x86Direct3D11=True, x86GuestArtifactsSha256=x86_hashes,
+                               wow64TransportABI=1, wow64DispatchTableExpectedEntryCount=148)
     profile_receipt_path=exp/"AVPPLAY_DXMT_D3D12_PROFILE.json"
     profile_receipt_path.write_text(json.dumps(profile_receipt,indent=2,sort_keys=True)+"\n",encoding="utf-8")
     (staging/"AVPPLAY_D3D12_STAGE_RECEIPT.json").write_text(json.dumps({"schemaVersion":1,"buildReceiptSha256":sha(build_path),"nativeArchiveSha256":sha(archive),"profileReceiptSha256":sha(profile_receipt_path),"graphicsCapabilitiesSha256":sha(cap)},indent=2,sort_keys=True)+"\n",encoding="utf-8")
     staging.replace(stage_root)
 finally:
     if staging.exists(): shutil.rmtree(staging)
-print(f"Staged matched D3D12 native/ARM64EC source closure at {stage_root}.")
+print(f"Staged matched modern DXMT native/guest graphics source closure at {stage_root}.")
 PY

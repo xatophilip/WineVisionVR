@@ -846,14 +846,18 @@ final class LauncherModel {
         desktopSurfaceReady = false
     }
 
-    func selectDesktopDemo() throws {
+    func selectDesktopDemo(architecture: WindowsGuestArchitecture? = nil) throws {
         guard canChangeSelection else { return }
-        guard let resource = Bundle.main.url(forResource: "DesktopDemo", withExtension: nil),
+        guard architecture == nil || architecture == .x64 || architecture == .x86 else {
+            throw WindowsGameManifestError.invalidLaunchConfiguration
+        }
+        let resourceName = architecture == .x86 ? "DesktopDemoX86" : "DesktopDemo"
+        guard let resource = Bundle.main.url(forResource: resourceName, withExtension: nil),
               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             throw CocoaError(.fileNoSuchFile)
         }
         let fm = FileManager.default
-        let directory = documents.appendingPathComponent("WindowsVR/Apps/DesktopDemo", isDirectory: true)
+        let directory = documents.appendingPathComponent("WindowsVR/Apps/" + resourceName, isDirectory: true)
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         guard isAppOwnedURL(directory), directory.standardizedFileURL == directory.resolvingSymlinksInPath().standardizedFileURL else {
             throw ImportFailure.folderAccessDenied
@@ -865,10 +869,16 @@ final class LauncherModel {
         try Data(contentsOf: resource.appendingPathComponent("desktop-demo.exe")).write(to: executable, options: .atomic)
         let demo = try JSONDecoder().decode(WindowsGameManifest.self,
             from: Data(contentsOf: resource.appendingPathComponent("manifest.json")))
+        guard demo.presentation == .desktop,
+              demo.guestArchitecture == (architecture == .x86 ? .x86 : nil) else {
+            throw WindowsGameManifestError.invalidLaunchConfiguration
+        }
         releaseGameDirectoryAccess()
         manifest = demo
         presentationModeDraft = .desktop
-        manifestName = L("Built-in Windows desktop test", "Integrierter Windows-Desktop-Test")
+        manifestName = architecture == .x86
+            ? L("Built-in 32-bit Windows desktop test", "Integrierter 32-Bit-Windows-Desktop-Test")
+            : L("Built-in Windows desktop test", "Integrierter Windows-Desktop-Test")
         gameDirectory = directory
         gameFolderName = directory.lastPathComponent
         selectedLibraryEntryID = nil

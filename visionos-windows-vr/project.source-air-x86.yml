@@ -1,0 +1,4 @@
+# Modern source AIR writer plus explicit experimental i386 resource entries.
+include:
+  - project.source-air.yml
+  - project.x86.yml

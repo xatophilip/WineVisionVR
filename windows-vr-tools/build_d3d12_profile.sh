@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Build the pinned visionOS-native DXMT closure and matching ARM64EC Wine DLLs.
+# Build pinned visionOS DXMT and matching ARM64EC/optional i386 graphics DLLs.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 PROFILE="${AVPPLAY_D3D12_PROFILE_SOURCE:-$ROOT/runtime-source-d3d12-experimental}"
 MADEIRA="${AVPPLAY_RUNTIME_SOURCE:-$ROOT/runtime-source}"
 BUILD_ROOT="${AVPPLAY_D3D12_BUILD_ROOT:-${AVPPLAY_BUILD_ROOT:-}}"
+x86_enabled="${AVPPLAY_ENABLE_X86:-0}"
+case "$x86_enabled" in 0|1) ;; *) echo "AVPPLAY_ENABLE_X86 must be 0 or 1." >&2; exit 1 ;; esac
+export AVPPLAY_ENABLE_X86="$x86_enabled"
 
 [[ "${AVPPLAY_ALLOW_RUNTIME_BUILD:-0}" == "1" && "${AVPPLAY_ENABLE_D3D12:-0}" == "1" ]] || {
     echo "Set AVPPLAY_ALLOW_RUNTIME_BUILD=1 and AVPPLAY_ENABLE_D3D12=1 to build D3D12." >&2; exit 1;
@@ -89,6 +92,17 @@ done
 for dll in d3d11.dll d3d12.dll dxgi.dll winemetal.dll; do
     [[ ! -e "$GUEST_FARM/$dll" ]] || { echo "Refusing to replace existing profile DLL: $GUEST_FARM/$dll" >&2; exit 1; }
 done
+if [[ "$x86_enabled" == 1 ]]; then
+    [[ -f "$MADEIRA/wine/build-i386/Makefile" ]] || {
+        echo "Build the matching Wine i386 base before modern DXMT (AVPPLAY_I386_BUILD_PHASE=base)." >&2; exit 1;
+    }
+    [[ ! -e "$BUILD_ROOT/dxmt-d3d12-i386" && ! -e "$BUILD_ROOT/dxmt-d3d12-i386.ini" ]] || {
+        echo "Modern i386 DXMT outputs exist; choose a fresh build root/profile." >&2; exit 1;
+    }
+    for tool in i686-w64-mingw32-clang i686-w64-mingw32-clang++ i686-w64-mingw32-ar i686-w64-mingw32-strip i686-w64-mingw32-windres i686-w64-mingw32-dlltool; do
+        [[ -x "$AVPPLAY_LLVM_MINGW_ROOT/bin/$tool" ]] || { echo "LLVM-MinGW lacks $tool." >&2; exit 1; }
+    done
+fi
 python3 - "$ROOT" "$PROFILE" <<'PY'
 import hashlib, json, pathlib, sys
 root, profile = map(pathlib.Path, sys.argv[1:])
@@ -142,7 +156,12 @@ python3 - "$NATIVE_BUILD" "$NATIVE_SOURCE" "$NATIVE_ARCHIVE" "$GUEST_FARM" "$LLV
 import hashlib, json, os, pathlib, shlex, shutil, subprocess, sys
 build, source, archive, guest, llvm_build, receipt_path, profile, madeira, root = map(pathlib.Path, sys.argv[1:])
 
-def run(args, **kwargs): subprocess.run(args, check=True, **kwargs)
+build_jobs = os.environ.get("AVPPLAY_BUILD_JOBS", "4")
+if not build_jobs.isdigit() or int(build_jobs) < 1:
+    raise SystemExit("AVPPLAY_BUILD_JOBS must be a positive integer.")
+def run(args, **kwargs):
+    if args and args[0] == "ninja": args = [args[0], "-j" + build_jobs, *args[1:]]
+    subprocess.run(args, check=True, **kwargs)
 def sha(path):
     h = hashlib.sha256()
     with path.open("rb") as stream:
@@ -235,11 +254,11 @@ if compiled_sources != needed:
     missing = sorted(str(p) for p in needed - compiled_sources)
     raise SystemExit("Missing xros Meson compile commands for native winemetal sources: " + ", ".join(missing))
 
-def output_path(target, basename):
+def output_path(target, basename, graph_build=build):
     candidates = [pathlib.Path(value) for value in target_outputs(target) if pathlib.PurePath(value).name == basename]
     if len(candidates) != 1: raise SystemExit(f"Meson target {target.get('name')} has no unique {basename} output.")
     path = candidates[0]
-    return path if path.is_absolute() else build / path
+    return path if path.is_absolute() else graph_build / path
 archives = [output_path(airconv_target, "libairconv.a"), output_path(parser_target, "libDXBCParserNative.a")]
 for path in archives: regular(path, "native Meson compiler archive")
 llvm_archives = sorted((llvm_build / "lib").glob("*.a"))
@@ -263,11 +282,86 @@ for dll, target in guest_targets.items():
     shutil.copy2(source_file, guest / dll)
     regular(guest / dll, f"copied ARM64EC {dll}")
 
+# i386 graphics use a second PE graph over the exact same patched modern
+# source. Its Wine import libraries come only from this profile's i386 base.
+# Native shaders/Unix code are built once by the ARM64EC graph above.
+x86_enabled = os.environ.get("AVPPLAY_ENABLE_X86", "0") == "1"
+x86_guest = profile / "app/Madeira/i386-windows"
+x86_graph = None
+source_receipt_path = profile / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json"
+source_receipt = json.loads(source_receipt_path.read_text(encoding="utf-8"))
+if x86_enabled:
+    if source_receipt.get("wow64TransportABI") != 1 or source_receipt.get("wow64DispatchTableExpectedEntryCount") != 148:
+        raise SystemExit("Modern i386 graphics require source-bound WOW64 ABI 1 and all 148 dispatch slots.")
+    graph = build.parent / "dxmt-d3d12-i386"
+    cross_file = build.parent / "dxmt-d3d12-i386.ini"
+    wine_i386 = madeira / "wine/build-i386"
+    if graph.exists() or cross_file.exists():
+        raise SystemExit("Refusing to reuse an existing modern i386 graphics graph.")
+    regular(wine_i386 / "Makefile", "same-profile Wine i386 graph")
+    mingw = pathlib.Path(os.environ["AVPPLAY_LLVM_MINGW_ROOT"])
+    binaries = {"c": "clang", "cpp": "clang++", "ar": "ar", "strip": "strip",
+                "windres": "windres", "dlltool": "dlltool"}
+    cross_file.write_text("[binaries]\n" + "".join(
+        f"{key} = {str(mingw / 'bin' / ('i686-w64-mingw32-' + value))!r}\n"
+        for key, value in binaries.items()) +
+        "\n[properties]\nneeds_exe_wrapper = true\n\n[host_machine]\n"
+        "system = 'windows'\ncpu_family = 'x86'\ncpu = 'i686'\nendian = 'little'\n")
+    run(["meson", "setup", str(graph), str(source), "--cross-file=" + str(cross_file),
+         "--native-file=" + str(build.parent / "dxmt-d3d12-xros-native.ini"),
+         "-Dbuildtype=release", "-Dwine_builtin_dll=true", "-Dwine_build_path=" + str(wine_i386),
+         "-Dnative_llvm_path=" + str(llvm_build),
+         "-Dnative_llvm_source_path=" + str(madeira / "toolchains/llvm-project/llvm"),
+         "-Denable_d3d12=true", "-Dvisionos_native=true", "-Dbuild_airconv_for_windows=false",
+         "-Denable_tests=false"])
+    graph_targets = json.loads(subprocess.check_output(
+        ["meson", "introspect", "--targets", str(graph)], text=True))
+    x86_outputs = {}
+    for name, directory in (("d3d11.dll", "/src/d3d11/"), ("d3d12.dll", "/src/d3d12/"),
+                            ("dxgi.dll", "/src/dxgi/"), ("winemetal.dll", "/src/winemetal/")):
+        selected = [target for target in graph_targets
+                    if any(pathlib.PurePath(value).name == name for value in target_outputs(target))
+                    and any(directory in path.as_posix() for path in target_sources(target))]
+        post = [target for target in graph_targets
+                if any(pathlib.PurePath(value).name == name + ".postproc" for value in target_outputs(target))]
+        if len(selected) != 1 or len(post) != 1:
+            raise SystemExit(f"Modern i386 graph lacks unique DLL/postprocessing targets for {name}.")
+        for target, basename in ((selected[0], name), (post[0], name + ".postproc")):
+            output = output_path(target, basename, graph)
+            run(["ninja", "-C", str(graph), output.resolve().relative_to(graph.resolve()).as_posix()])
+        x86_outputs[name] = output_path(selected[0], name, graph)
+    sys.path.insert(0, str(root / "windows-vr-tools"))
+    from stage_resources import pe_machine
+    for name, output in x86_outputs.items():
+        regular(output, "fresh modern i386 " + name)
+        if pe_machine(output) != 0x14c:
+            raise SystemExit(f"Modern i386 graphics target has the wrong architecture: {output}")
+        import_dump = subprocess.check_output([str(mingw / "bin/llvm-readobj"), "--coff-imports", str(output)], text=True)
+        dependencies = {row.strip().split(": ", 1)[1].casefold() for row in import_dump.splitlines()
+                        if row.strip().startswith("Name: ")}
+        forbidden = dependencies & {"libc++.dll", "libc++abi.dll", "libunwind.dll", "libstdc++-6.dll"}
+        if forbidden:
+            raise SystemExit(f"Modern i386 {name} must embed its C++ runtime: {sorted(forbidden)}")
+    x86_guest.mkdir(parents=True, exist_ok=True)
+    for name, output in x86_outputs.items():
+        # Wine's base phase may provide fallback d3d12.dll. Replace it only
+        # with this freshly compiled same-profile modern graphics closure.
+        shutil.copy2(output, x86_guest / name)
+    x86_graph = {"buildDirectory": str(graph), "wineBuildDirectory": str(wine_i386),
+                 "wineMakefileSha256": sha(wine_i386 / "Makefile"),
+                 "crossFileSha256": sha(cross_file), "sharedCXXImportsRejected": True}
+
 # The profile's exported table names/count are checked from the artifact, not
 # copied from a declarative readiness flag. These are symbol reads, not execution.
 nm = subprocess.check_output(["xcrun", "--sdk", "xros", "nm", "-gU", str(archive)], text=True)
 required_symbols = ("_dxmt_winemetal_unix_call_funcs", "_dxmt_winemetal_unix_call_wow64_funcs",
                     "_wvr_dxmt_d3d12_unix_call_count_v1", "_wvr_dxmt_d3d12_transport_abi_v1")
+if source_receipt.get("wow64TransportABI") == 1:
+    if source_receipt.get("wow64DispatchTableExpectedEntryCount") != 148:
+        raise SystemExit("Modern WOW64 source dispatch count must be 148.")
+    required_symbols += ("_wvr_dxmt_wow64_transport_abi_v1", "_wvr_dxmt_wow64_unix_call_count_v1")
+elif source_receipt.get("wow64TransportABI") is not None:
+    raise SystemExit("Unsupported modern WOW64 transport ABI.")
 missing_symbols = [symbol for symbol in required_symbols if symbol not in nm]
 if missing_symbols: raise SystemExit("Native archive is missing dispatch exports: " + ", ".join(missing_symbols))
 sys.path.insert(0, str(root / "windows-vr-tools"))
@@ -303,12 +397,17 @@ if actual_llvm_revision != llvm_lock["revision"]:
     raise SystemExit("LLVM source revision does not match windows-vr-tools/llvm.lock.json.")
 llvm_mingw_root = pathlib.Path(os.environ["AVPPLAY_LLVM_MINGW_ROOT"])
 llvm_mingw_tools = ("arm64ec-w64-mingw32-gcc", "arm64ec-w64-mingw32-g++", "arm64ec-w64-mingw32-ar", "arm64ec-w64-mingw32-strip", "arm64ec-w64-mingw32-windres")
+if x86_enabled:
+    llvm_mingw_tools += tuple("i686-w64-mingw32-" + name for name in ("clang", "clang++", "ar", "strip", "windres", "dlltool"))
 llvm_mingw_hashes = {name: sha(llvm_mingw_root / "bin" / name) for name in llvm_mingw_tools}
 madeira_lock = json.loads((root / "windows-vr-tools/sources.lock.json").read_text(encoding="utf-8"))
 madeira_revision = next(s["revision"] for s in madeira_lock["sources"] if s["name"] == "madeira")
 artifacts = {"native/libdxmt_d3d12_combined.a": sha(archive)}
 for dll in ("d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll"):
     artifacts[f"guest/arm64ec-windows/{dll}"] = sha(guest / dll)
+if x86_enabled:
+    for dll in ("d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll"):
+        artifacts[f"guest/i386-windows/{dll}"] = sha(x86_guest / dll)
 receipt = {
  "schemaVersion": 1, "profileId": source_receipt["profileId"],
  "sourceProvenanceSha256": sha(source_receipt_path), "nativeAdaptationReceiptSha256": sha(adaptation_path),
@@ -322,7 +421,12 @@ receipt = {
  "shaderPlatformHeaderSha256": sha(platform_header),
  "buildCommandsCompleted": ["Meson native DXMT targets", "xros archive link", "Meson ARM64EC d3d11/d3d12/dxgi/winemetal targets"],
 }
+if source_receipt.get("wow64TransportABI") == 1:
+    receipt.update(wow64TransportABI=1, wow64DispatchTableExpectedEntryCount=148)
+if x86_enabled:
+    receipt["i386GraphicsBuild"] = x86_graph
+    receipt["buildCommandsCompleted"].append("Meson i386 d3d11/d3d12/dxgi/winemetal targets and Wine builtin postprocessors")
 receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
-echo "Built receipt-backed D3D12 DXMT native archive and ARM64EC guest DLL closure. No Wine guest was run."
+echo "Built receipt-backed modern DXMT native archive and guest graphics closure (x86=$x86_enabled). No Wine guest was run."

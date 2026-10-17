@@ -33,6 +33,8 @@
 // Optional symbols are provided only by the modern profile-specific native
 // DXMT archive. A resource marker cannot turn a baseline archive into D3D12.
 extern "C" size_t wvr_dxmt_d3d12_unix_call_count_v1(void) __attribute__((weak_import));
+extern "C" unsigned int wvr_dxmt_wow64_transport_abi_v1(void) __attribute__((weak_import));
+extern "C" size_t wvr_dxmt_wow64_unix_call_count_v1(void) __attribute__((weak_import));
 extern "C" uint32_t wvr_dxmt_d3d12_transport_abi_v1(void) __attribute__((weak_import));
 extern "C" void winios_post_key(int virtualKey, int down);
 
@@ -664,6 +666,42 @@ bool HasD3D12Package() {
     return available;
 }
 
+bool HasModernX86Package() {
+    if (!HasD3D12Package() || !wvr_dxmt_wow64_transport_abi_v1 ||
+        !wvr_dxmt_wow64_unix_call_count_v1 || wvr_dxmt_wow64_transport_abi_v1() != 1 ||
+        wvr_dxmt_wow64_unix_call_count_v1() != 148) return false;
+    NSURL *resources = [NSBundle mainBundle].resourceURL;
+    NSString *markerPath = [resources URLByAppendingPathComponent:@"WindowsVR/GraphicsCapabilities.json"].path;
+    NSString *profilePath = [resources URLByAppendingPathComponent:@"WindowsVR/D3D12Experimental/AVPPLAY_DXMT_D3D12_PROFILE.json"].path;
+    auto readObject = [](NSString *path) -> NSDictionary * {
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        if (!data || data.length > 65536) return nil;
+        id value = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        return [value isKindOfClass:[NSDictionary class]] ? value : nil;
+    };
+    NSDictionary *marker = readObject(markerPath), *profile = readObject(profilePath);
+    id enabled = marker[@"x86Direct3D11"];
+    if (![enabled isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)enabled) != CFBooleanGetTypeID() ||
+        ![enabled boolValue] || ![profile[@"x86GuestArtifactsSha256"] isKindOfClass:[NSDictionary class]]) return false;
+    for (NSString *key in @[@"wow64TransportABI", @"wow64DispatchTableExpectedEntryCount"]) {
+        id value = marker[key];
+        if (![value isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() ||
+            [value doubleValue] != ([key isEqual:@"wow64TransportABI"] ? 1.0 : 148.0)) return false;
+    }
+    for (NSString *name in @[@"d3d11.dll", @"d3d12.dll", @"dxgi.dll", @"winemetal.dll"]) {
+        NSString *path = [[resources URLByAppendingPathComponent:@"Runtime/i386-windows"] URLByAppendingPathComponent:name].path;
+        NSDictionary *info = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+        uint16_t machine = 0;
+        std::string hash;
+        if (![info[NSFileType] isEqualToString:NSFileTypeRegular] ||
+            !IsContainedPath(path.fileSystemRepresentation ?: "", resources.path.fileSystemRepresentation ?: "") ||
+            !ReadPEMachine(path.fileSystemRepresentation ?: "", machine) || machine != 0x014c ||
+            !SHA256File(path.fileSystemRepresentation, hash) ||
+            ![profile[@"x86GuestArtifactsSha256"][name] isEqual:[NSString stringWithUTF8String:hash.c_str()]]) return false;
+    }
+    return true;
+}
+
 uint16_t RuntimeGuestMachine(const LaunchRequest &request, uint16_t executableMachine) {
     if (request.guestArchitecture == "x86") return 0x014c;
     if (request.guestArchitecture == "x64") return 0x8664;
@@ -753,8 +791,8 @@ int32_t PreflightRequest(LaunchRequest &request, std::string &error) {
         return ENOTSUP;
     }
     if (runtimeMachine == 0x014c) {
-        if (request.graphics != "direct3D11" || IsModernDXMTNativeProfile()) {
-            error = "The experimental 32-bit runtime requires its matching legacy D3D11 graphics profile.";
+        if (request.graphics != "direct3D11" || (IsModernDXMTNativeProfile() && !HasModernX86Package())) {
+            error = "The 32-bit runtime requires a matching D3D11 package and a validated native WOW64 graphics transport.";
             return ENOTSUP;
         }
         if (!HasX86WineResources(error)) return ENOENT;
@@ -981,6 +1019,10 @@ int32_t RunRequest(LaunchRequest request) {
     for (const auto &entry : request.environment) {
         SetLaunchEnvironment(entry.first.c_str(), entry.second.c_str());
     }
+    // Steam's 64-bit launch host may initialize GDI before its 32-bit child.
+    // A shared section lets that child map the table inside its guest window.
+    if (RuntimeGuestMachine(request, machine) == 0x014c)
+        SetLaunchEnvironment("MADEIRA_GDI_SHARED_SECTION", "1");
     char address[32];
     if (!nativeARM64) {
         std::snprintf(address, sizeof(address), "%llx", static_cast<unsigned long long>(jitRX));

@@ -73,7 +73,7 @@ struct ContentView: View {
                 didStartDesktopSmokeTest = true
                 do {
                     setenv("MADEIRA_DUMP_SURFACES", "1", 1)
-                    try model.selectDesktopDemo()
+                    try model.selectDesktopDemo(architecture: ProcessInfo.processInfo.arguments.contains("--x86-guest") ? .x86 : nil)
                     model.launchArgumentsText = "[\"--self-test\"]"
                     await startLaunch()
                 } catch { model.presentLibraryError(error) }

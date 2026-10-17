@@ -58,10 +58,8 @@ if [[ "$d3d12_enabled" == 1 && "${AVPPLAY_BUILD_WINE_PE:-0}" != 1 ]]; then
 fi
 x86_enabled="${AVPPLAY_ENABLE_X86:-0}"
 case "$x86_enabled" in 0|1) ;; *) echo "AVPPLAY_ENABLE_X86 must be 0 or 1." >&2; exit 1 ;; esac
-if [[ "$x86_enabled" == 1 && "$d3d12_enabled" == 1 ]]; then
-    echo "Experimental x86 requires the matching legacy D3D11 native profile; modern D3D12 WOW64 is not implemented." >&2
-    exit 1
-fi
+# Modern x86 is accepted only after the source-matched guest/native receipts
+# are verified by the build and staging steps below.
 export AVPPLAY_ENABLE_X86="$x86_enabled"
 d3d12_profile="${AVPPLAY_D3D12_PROFILE_SOURCE:-$ROOT/runtime-source-d3d12-experimental}"
 source_cache="${AVPPLAY_SOURCE_CACHE_ROOT:-$ROOT/third-party}"
@@ -222,6 +220,9 @@ if [[ "$d3d12_enabled" == 1 ]]; then
         AVPPLAY_AIR_PLATFORM_HEADER="${AVPPLAY_D3D12_BUILD_ROOT:-$BUILD_ROOT}/d3d12-generated/wvr_metallib_platform.h" \
         bash "$ROOT/windows-vr-tools/build_air_writer.sh"
     app_spec="$ROOT/visionos-windows-vr/project.source-air.yml"
+    if [[ "$x86_enabled" == 1 ]]; then
+        app_spec="$ROOT/visionos-windows-vr/project.source-air-x86.yml"
+    fi
 fi
 
 python3 "$ROOT/windows-vr-tools/stage_fex_cache.py" \
@@ -259,6 +260,7 @@ AVPPLAY_MADEIRA_STEAM_SOURCE="$source_cache/madeira" bash "$ROOT/windows-vr-tool
 bash "$ROOT/windows-vr-tools/build_desktop_demo.sh"
 bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
 if [[ "$x86_enabled" == 1 ]]; then
+    AVPPLAY_DESKTOP_DEMO_ARCH=x86 bash "$ROOT/windows-vr-tools/build_desktop_demo.sh"
     AVPPLAY_VR_SMOKE_ARCH=x86 bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
 fi
 

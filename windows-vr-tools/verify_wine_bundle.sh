@@ -84,6 +84,22 @@ import hashlib
 backend = app / "Runtime" / translator["guestResource"]
 if backend.is_symlink() or not backend.is_file() or hashlib.sha256(backend.read_bytes()).hexdigest() != translator.get("sha256"):
     raise SystemExit("error: packaged WOW64 FEX translator differs from its receipt")
+marker_path = app / "WindowsVR/GraphicsCapabilities.json"
+if marker_path.exists():
+    marker = json.loads(marker_path.read_text())
+    modern = receipt.get("guest", {}).get("x86", {}).get("modernDXMT", {})
+    profile = json.loads((app / "WindowsVR/D3D12Experimental/AVPPLAY_DXMT_D3D12_PROFILE.json").read_text())
+    if (marker.get("x86Direct3D11") is not True or type(marker.get("wow64TransportABI")) is not int
+            or marker["wow64TransportABI"] != 1 or marker.get("wow64DispatchTableExpectedEntryCount") != 148
+            or modern.get("transportABI") != 1 or modern.get("unixCallCount") != 148
+            or modern.get("guestArtifactsSha256") != profile.get("x86GuestArtifactsSha256")
+            or hashlib.sha256(marker_path.read_bytes()).hexdigest() != profile.get("graphicsCapabilitiesSha256")):
+        raise SystemExit("error: modern x86 graphics capability is not bound to its package receipt")
+    for name in ("d3d11.dll", "d3d12.dll", "dxgi.dll", "winemetal.dll"):
+        path = app / "Runtime/i386-windows" / name
+        if (path.is_symlink() or not path.is_file()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != modern.get("guestArtifactsSha256", {}).get(name)):
+            raise SystemExit("error: modern x86 graphics DLL differs from its source build receipt: " + name)
 PYX86
   python3 "$(dirname "$0")/verify_wine_imports.py" "$APP/Runtime/aarch64-windows" --machine arm64
   python3 "$(dirname "$0")/verify_wine_imports.py" "$APP/Runtime/i386-windows" --machine i386 --reject-shared-cxx \

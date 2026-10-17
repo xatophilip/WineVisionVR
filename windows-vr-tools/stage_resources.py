@@ -10,7 +10,7 @@ import shutil
 import tarfile
 import tempfile
 
-from resource_receipt import GUEST_RECEIPT_NAME, sha256_file, validate_receipts
+from resource_receipt import GUEST_RECEIPT_NAME, sha256_file, validate_receipts, validate_modern_wow64, MODERN_WOW64_SYMBOLS, MODERN_X86_DLLS
 
 ROOT = Path(__file__).resolve().parents[1]
 WINE_TOOLS = {
@@ -46,6 +46,12 @@ ARM64EC_REQUIRED_BUILTINS = {
 I386_REQUIRED_BUILTINS = (REQUIRED_BUILTINS - {"winedevice.exe", "wineboot.exe", "services.exe", "rpcss.exe"}) | {
     "user32.dll", "gdi32.dll", "win32u.dll", "d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll",
 }
+def i386_required_builtins(source):
+    if (source.parent.parent / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json").is_file():
+        return (I386_REQUIRED_BUILTINS - {"d3d10core.dll"}) | {"d3d12.dll"}
+    return I386_REQUIRED_BUILTINS
+
+
 I386_PE_SUFFIXES = {".dll", ".drv", ".exe", ".cpl", ".acm", ".ax", ".ocx", ".com"}
 
 
@@ -401,6 +407,13 @@ def validate_d3d12_stage(stage_root, native_archive):
             or adaptation.get("appliedPortSourcesSha256", {}).get("windows-vr-openxr/patches/0003-dxmt-d3d12-visionos-native.patch")
                != source.get("integrationInputsSha256", {}).get("windows-vr-openxr/patches/0003-dxmt-d3d12-visionos-native.patch")):
         fail("D3D12 source adaptation receipt is stale or not bound to the native port patch.")
+    expected_symbols = ["_dxmt_winemetal_unix_call_funcs", "_dxmt_winemetal_unix_call_wow64_funcs",
+                        "_wvr_dxmt_d3d12_unix_call_count_v1", "_wvr_dxmt_d3d12_transport_abi_v1"]
+    if source.get("wow64TransportABI") == 1:
+        if (source.get("wow64DispatchTableExpectedEntryCount") != 148
+                or build.get("wow64TransportABI") != 1 or build.get("wow64DispatchTableExpectedEntryCount") != 148):
+            fail("Modern WOW64 source/build transport capability differs.")
+        expected_symbols += MODERN_WOW64_SYMBOLS
     if (build.get("schemaVersion") != 1 or build.get("profileId") != profile_id
             or build.get("sourceProvenanceSha256") != source_hash
             or build.get("nativeAdaptationReceiptSha256") != adaptation_hash
@@ -412,9 +425,7 @@ def validate_d3d12_stage(stage_root, native_archive):
             or build.get("dispatchTableExpectedEntryCount") != 148
             or build.get("unixCallTable") != source.get("unixCallTable")
             or build.get("transportABI") != source.get("transportABI")
-            or build.get("exportedDispatchSymbols") != [
-                "_dxmt_winemetal_unix_call_funcs", "_dxmt_winemetal_unix_call_wow64_funcs",
-                "_wvr_dxmt_d3d12_unix_call_count_v1", "_wvr_dxmt_d3d12_transport_abi_v1"]):
+            or build.get("exportedDispatchSymbols") != expected_symbols):
         fail("D3D12 build receipt does not match its source/adaptation and exported dispatch table.")
     artifacts = build.get("artifactsSha256", {})
     if artifacts.get("native/libdxmt_d3d12_combined.a") != archive_hash:
@@ -452,6 +463,19 @@ def validate_d3d12_stage(stage_root, native_archive):
         "sourceRevision": source.get("sourceRevision"),
         "sourceProfileReceiptSha256": source_hash,
     }
+    x86_hashes = {name: artifacts.get(f"guest/i386-windows/{name}") for name in MODERN_X86_DLLS}
+    if any(value is not None for value in x86_hashes.values()):
+        if source.get("wow64TransportABI") != 1 or source.get("wow64DispatchTableExpectedEntryCount") != 148:
+            fail("Modern i386 graphics stage lacks a matching native WOW64 transport.")
+        for name, expected in x86_hashes.items():
+            path = stage_root / "Runtime/i386-windows" / name
+            regular_file(path, "Modern i386 graphics DLL")
+            if pe_machine(path) != 0x14c or not expected or sha256_file(path) != expected:
+                fail(f"Modern i386 {name} differs from its DXMT build receipt.")
+        if profile.get("x86GuestArtifactsSha256") != x86_hashes:
+            fail("Modern i386 graphics profile receipt differs from its staged binaries.")
+        expected_capabilities.update({"x86Direct3D11": True, "wow64TransportABI": 1,
+                                      "wow64DispatchTableExpectedEntryCount": 148})
     if capabilities != expected_capabilities:
         fail("D3D12 capability marker is missing the exact source pin/profile receipt contract.")
     if (stage_receipt.get("schemaVersion") != 1
@@ -490,7 +514,7 @@ def validate_wine_resources(source, enable_x86=False):
             if key in names:
                 fail(f"Wine builtin farm contains case-colliding files: {path.name}")
             names[key] = path
-        required = I386_REQUIRED_BUILTINS if farm == "i386-windows" else REQUIRED_BUILTINS
+        required = i386_required_builtins(source) if farm == "i386-windows" else REQUIRED_BUILTINS
         missing = sorted(required - set(names))
         if missing:
             fail(f"Wine builtin farm {farm} is missing required files: {', '.join(missing)}")
@@ -532,7 +556,7 @@ def copy_builtins(source, destination, enable_x86=False):
             if packaged_builtin(path, farm):
                 shutil.copy2(path, farm_output / path.name)
         names = {path.name.casefold() for path in farm_output.iterdir()}
-        required = I386_REQUIRED_BUILTINS if farm == "i386-windows" else REQUIRED_BUILTINS
+        required = i386_required_builtins(source) if farm == "i386-windows" else REQUIRED_BUILTINS
         missing = sorted(required - names)
         if missing:
             fail(f"Staged Wine builtin farm {farm} is incomplete: {', '.join(missing)}")
@@ -638,8 +662,6 @@ def main():
                         help="Khronos OpenXR-SDK license file to include in WindowsVR/Legal")
     args = parser.parse_args()
 
-    if args.enable_x86 and args.d3d12_stage is not None:
-        fail("x86 support requires matching legacy DXMT native/guest binaries; the experimental D3D12 profile is not WOW64-compatible.")
     source = args.source.resolve()
     runtime_source = args.runtime_source.resolve()
     output = args.output.absolute()
@@ -657,6 +679,10 @@ def main():
                         ("OpenXR-SDK", licenses["WindowsVR/Legal/OpenXR-SDK/LICENSE"])):
         require_license(path, label)
     validate_prefix_archive(template)
+    if args.enable_x86 and (runtime_source / "AVPPLAY_D3D12_SOURCE_PROVENANCE.json").exists():
+        if args.d3d12_stage is None:
+            fail("Modern x86 support requires its receipt-backed modern DXMT stage.")
+        validate_modern_wow64(runtime_source, source)
     native_receipt, _ = validate_receipts(source, runtime_source, native_receipt_path, args.enable_x86)
     validate_prefix_provenance(prefix_provenance, template, native_receipt["source"]["sourceRevision"])
     validate_wine_resources(source, args.enable_x86)
@@ -665,6 +691,11 @@ def main():
         fail("--d3d12-stage and --d3d12-native-archive must be supplied together.")
     d3d12_stage = args.d3d12_stage.resolve() if args.d3d12_stage else None
     d3d12_inputs = validate_d3d12_stage(d3d12_stage, args.d3d12_native_archive.resolve()) if d3d12_stage else None
+    if args.enable_x86 and d3d12_stage:
+        for name in MODERN_X86_DLLS:
+            staged = d3d12_stage / "Runtime/i386-windows" / name
+            if not staged.is_file() or sha256_file(staged) != sha256_file(source / "i386-windows" / name):
+                fail(f"Modern x86 graphics stage and Wine resource build differ: {name}")
     guest_output = output.parent / "WindowsVR"
     if output.exists() or guest_output.exists():
         if not args.reuse_existing:

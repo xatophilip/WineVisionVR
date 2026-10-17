@@ -13,6 +13,10 @@ enum { EDIT_NOTE = 100, BUTTON_COUNT, BUTTON_SAVE, BUTTON_LOAD };
 static HWND editor, status;
 static unsigned int clicks;
 static WNDPROC original_button_proc;
+static const WCHAR *note_path = L"demo-note.txt";
+static BOOL last_save_ok, last_load_ok;
+static unsigned self_test_step, self_test_initial_clicks;
+
 
 /* Diagnostic events contain IDs/counts only, never the user's note text. */
 static void trace(const char *event) {
@@ -47,22 +51,25 @@ static void message(const WCHAR *text) {
 }
 
 static void save_note(void) {
+    last_save_ok = FALSE;
     WCHAR text[8192];
     char utf8[32768];
     int length = GetWindowTextW(editor, text, 8192);
     int bytes = WideCharToMultiByte(CP_UTF8, 0, text, length, utf8, sizeof(utf8), NULL, NULL);
-    HANDLE file = CreateFileW(L"demo-note.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileW(note_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) { message(L"Save failed: could not create demo-note.txt"); return; }
     DWORD written = 0;
     BOOL ok = WriteFile(file, utf8, bytes, &written, NULL);
     CloseHandle(file);
-    message(ok && written == (DWORD)bytes ? L"Saved demo-note.txt. Close and reopen to test persistence." : L"Save failed: incomplete write.");
+    last_save_ok = ok && written == (DWORD)bytes;
+    message(last_save_ok ? L"Saved demo-note.txt. Close and reopen to test persistence." : L"Save failed: incomplete write.");
 }
 
 static void load_note(void) {
+    last_load_ok = FALSE;
     char utf8[32768];
     WCHAR text[8192];
-    HANDLE file = CreateFileW(L"demo-note.txt", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileW(note_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) { message(L"No saved demo-note.txt yet. Type a note and choose Save note."); return; }
     DWORD bytes = 0;
     BOOL ok = ReadFile(file, utf8, sizeof(utf8), &bytes, NULL);
@@ -70,8 +77,8 @@ static void load_note(void) {
     int count = ok ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, bytes, text, 8191) : 0;
     if (!ok || (bytes && count == 0)) { message(L"Load failed: could not read the UTF-8 note."); return; }
     text[count] = 0;
-    SetWindowTextW(editor, text);
-    message(L"Loaded demo-note.txt.");
+    last_load_ok = SetWindowTextW(editor, text);
+    message(last_load_ok ? L"Loaded demo-note.txt." : L"Load failed: edit control rejected the note.");
 }
 
 static LRESULT CALLBACK window_proc(HWND window, UINT event, WPARAM wparam, LPARAM lparam) {
@@ -144,6 +151,47 @@ static LRESULT CALLBACK window_proc(HWND window, UINT event, WPARAM wparam, LPAR
     }
     case WM_TIMER: {
         KillTimer(window, 1);
+        if (self_test_step == 1) {
+            /* Exercise actual EDIT/button handlers after the queued pointer
+             * input had a message-loop turn. Keep ordinary user notes intact. */
+            BOOL mouse_ok = clicks == self_test_initial_clicks + 1;
+            const WCHAR *sample = L"WineVision GDI roundtrip \x2713";
+            WCHAR loaded[128];
+            note_path = L"demo-selftest-note.txt";
+            SetWindowTextW(editor, L"");
+            for (const WCHAR *character = sample; *character; ++character)
+                SendMessageW(editor, WM_CHAR, *character, 0);
+            GetWindowTextW(editor, loaded, 128);
+            BOOL edit_ok = lstrcmpW(loaded, sample) == 0;
+            unsigned before = clicks;
+            SendMessageW(GetDlgItem(window, BUTTON_COUNT), BM_CLICK, 0, 0);
+            BOOL button_ok = clicks == before + 1;
+            SendMessageW(GetDlgItem(window, BUTTON_SAVE), BM_CLICK, 0, 0);
+            SetWindowTextW(editor, L"cleared before load");
+            SendMessageW(GetDlgItem(window, BUTTON_LOAD), BM_CLICK, 0, 0);
+            GetWindowTextW(editor, loaded, 128);
+            BOOL roundtrip_ok = last_save_ok && last_load_ok && lstrcmpW(loaded, sample) == 0;
+            BOOL passed = mouse_ok && edit_ok && button_ok && roundtrip_ok;
+            char result[240];
+            snprintf(result, sizeof(result),
+                "%s GDI desktop self-test pointerBits=%u SendInput=%d edit=%d button=%d save=%d load=%d UTF8roundtrip=%d\r\n",
+                passed ? "PASS" : "FAIL", (unsigned)(sizeof(void *) * 8), mouse_ok,
+                edit_ok, button_ok, last_save_ok, last_load_ok, roundtrip_ok);
+            trace(result);
+            HANDLE file = CreateFileW(L"demo-selftest-result.txt", GENERIC_WRITE,
+                FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (file != INVALID_HANDLE_VALUE) {
+                DWORD written;
+                WriteFile(file, result, (DWORD)lstrlenA(result), &written, NULL);
+                CloseHandle(file);
+            }
+            note_path = L"demo-note.txt";
+            self_test_step = 2;
+            message(passed ? L"GDI self-test passed. You can now test the controls manually."
+                           : L"GDI self-test failed. See demo-selftest-result.txt for the failed step.");
+            return 0;
+        }
+        self_test_initial_clicks = clicks;
         trace("automatic Win32 input probe start");
         RECT rect;
         GetWindowRect(GetDlgItem(window, BUTTON_COUNT), &rect);
@@ -153,6 +201,8 @@ static LRESULT CALLBACK window_proc(HWND window, UINT event, WPARAM wparam, LPAR
         input[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
         input[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
         trace(SendInput(2, input, sizeof(INPUT)) == 2 ? "SendInput accepted 2 events" : "SendInput failed");
+        self_test_step = 1;
+        SetTimer(window, 1, 700, NULL);
         return 0;
     }
     case WM_DESTROY: trace("window destroyed"); PostQuitMessage(0); return 0;

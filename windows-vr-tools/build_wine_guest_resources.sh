@@ -189,6 +189,11 @@ for required in "$runtime_root/app/Madeira/aarch64-windows" "$runtime_root/app/M
         exit 1
     fi
 done
+if [[ "${AVPPLAY_ENABLE_X86:-0}" == 1 && "${AVPPLAY_ENABLE_D3D12:-0}" == 1 ]]; then
+    AVPPLAY_BUILD_WINE_I386=1 AVPPLAY_I386_RUNTIME_SOURCE="$runtime_root" \
+        AVPPLAY_ALLOW_I386_ACTIVE_CANDIDATE=1 AVPPLAY_I386_BUILD_PHASE=base \
+        bash "$repo_root/windows-vr-tools/build_wine_i386_resources.sh"
+fi
 if [[ "${AVPPLAY_ENABLE_D3D12:-0}" == "1" ]]; then
     AVPPLAY_ALLOW_RUNTIME_BUILD=1 AVPPLAY_ENABLE_D3D12=1 \
         bash "$repo_root/windows-vr-tools/build_d3d12_experimental.sh"
@@ -201,12 +206,10 @@ fi
 cp "$runtime_root/dxmt/LICENSE" "$runtime_root/app/Madeira/legal/DXMT-LICENSE"
 
 if [[ "${AVPPLAY_ENABLE_X86:-0}" == 1 ]]; then
-    if [[ "${AVPPLAY_ENABLE_D3D12:-0}" == 1 ]]; then
-        echo "Experimental x86 requires matching legacy D3D11 graphics, not modern DXMT." >&2
-        exit 1
-    fi
+    phase=all
+    if [[ "${AVPPLAY_ENABLE_D3D12:-0}" == 1 ]]; then phase=validate; fi
     AVPPLAY_BUILD_WINE_I386=1 AVPPLAY_I386_RUNTIME_SOURCE="$runtime_root" \
-        AVPPLAY_ALLOW_I386_ACTIVE_CANDIDATE=1 \
+        AVPPLAY_ALLOW_I386_ACTIVE_CANDIDATE=1 AVPPLAY_I386_BUILD_PHASE="$phase" \
         bash "$repo_root/windows-vr-tools/build_wine_i386_resources.sh"
 fi
 
