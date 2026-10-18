@@ -76,3 +76,48 @@ existing Update / Repair operation for this owned, installed game. Diagnostic
 logging records only the app ID and numeric status. It does not launch Wine or
 forge installation state. Success is tied to the actual normal installer
 completion; existing queue entries and user account checks are preserved.
+
+## Opt-in local integration and provider controls
+
+`windows-vr-tools/test_tomb_dosbox_wine.py --help` describes the opt-in macOS
+integration runner. Supply a pristine owned game directory, an external build
+directory, the pinned MinGW toolchain, the verified local Wine/FreeType build,
+and the stock prefix template with its SHA256. The runner rejects output inside
+the game directory before writing anything, rejects game symlinks, clones the
+game into a fresh isolated prefix, and checks every original file afterwards.
+It never uses a Steam account or the installed application's prefix.
+
+The runner compiles the production compatibility helper, executable resolver,
+scoped environment, complete controller-to-VK mapping, and held-key transition
+method. It uses real GameController SDK button constants with scripted controller
+states. An owned Win64 parent starts the original bundled x86 DOSBox using the
+production settings and flattened command line; targeted Win32 keys go only to
+that child's SDL window. Physical controller sampling and the visionOS native
+key sink remain outside this local test.
+
+Capture selection is required: `--capture-method native` uses DOSBox's Ctrl+F5
+screenshots. Ctrl is also Tomb Raider's action/confirmation key, so these images
+cannot establish menu confirmation or inventory closure solely from mapped
+input. Checkpoint names describe requests, not visual assertions. The experimental
+`--capture-method gdi` reads only the owned child window; its initial actual test
+returned an all-black image and was rejected, rather than accepted as game pixels.
+
+The 18 October forward-first run used unchanged vendor `core=auto` and the
+production software settings. It reached the title, opening movie and Caves.
+Images show running into the open corridor, standing after the forward key was
+released, and a subsequent turn with camera settling after release. The owned
+protocol completed with no held keys; all 136 original game files were unchanged.
+Visual review is separate from the runner's bounded protocol result:
+`harnessPassed` does not automatically mean gameplay passed. No headset, physical
+Sense, audio, frame-rate or fresh-prefix-initialization result is implied.
+
+Earlier isolated launches intermittently faulted before the first mapped input.
+A bare DOSBox prompt and paired normal/auto core controls also ran successfully;
+there is no established core-setting fix. Raw failures are retained separately.
+`windows-vr-tools/test_dosbox_provider_wine.py --help` provides narrower genuine
+QPC and SDL controls: direct x86 and Win64-parent launches, main/worker QPC loops,
+SDL timer callbacks, and video/joystick/audio initialization. The final atomic
+SDL probe passed all eight cases; QPC main/worker controls passed directly and
+through the parent. Those results do not establish audio playback or explain
+the intermittent game-startup fault. `--verify-receipts` only revalidates preserved
+execution hashes and results; it does not execute a new test.
