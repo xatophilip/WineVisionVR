@@ -2,6 +2,8 @@
 
 After installing a verified diagnostic WineVision package, the host runner can wait for the wearer and run the existing direct32 SEH control followed by the identical child launched from its x64 parent. It never installs an app or changes runtime, game, Steam, pairing or lock settings.
 
+The exact paired headset must already be powered on and reachable. The bounded unlock wait checks lock state; it does not wait through boot or reconnect. A powered-off/unavailable device remains a transport failure (including CoreDevice4016), and the runner stops with raw evidence preserved. Cached list-device JSON can report a disconnected tunnel even when the CLI labels a device available, so it is not used to guess readiness.
+
 Start the command, then put on the headset and keep it worn. Tests begin when `devicectl` explicitly reports `passcodeRequired=false` and `unlockedSinceBoot=true`. There is no need to return to the Mac to send a readiness reply. The default unlock wait is 180 seconds and each diagnostic phase has a separate 120-second deadline.
 
 ```sh
