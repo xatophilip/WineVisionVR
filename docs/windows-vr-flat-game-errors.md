@@ -1,6 +1,37 @@
-# Flat-game error review — 17 October 2026
+# Game error reviews
 
-## Tomb Raider I (Steam 224960)
+## 18 October 2026 — unified main-app capture
+
+The unified main app retains the existing Steam login and installed library; the
+user confirmed both after the in-place update. Its runtime build ID begins
+`05dca43b3dcd`. The earlier captures below describe older packages, not the
+current state of 32-bit support.
+
+| Attempt (British Summer Time) | Evidence and next step |
+|---|---|
+| CyberThreat, 11:41 | Captured before the unified update, on runtime `5b87d3e724b0`. Repeated `NtWaitForAlertByThreadId` alert-storm reports do not establish a root cause. No post-update CyberThreat attempt was captured; retest on the current package before attributing this failure to it. |
+| Audioshield, 11:45 | Steam authentication and entitlement checks succeed. Its 32-bit child fails before guest frames: native ARM64 `wow64!Wow64LdrpInitialize` calls an x64 `RtlRunOnceExecuteOnce` thunk through ARM64EC ntdll. Patch 0015 redirects native ARM64 importers to the native target while preserving x64 importers. Before/after production-code tests with the actual shipped PE metadata pass; a new device build is still required. Secondary exception-reporting faults are not the initial cause. |
+| Tomb Raider I, 11:46 | Steam option 1 reports client error 19 with update waits/retries. This does not prove DOSBox ran. The unified package now includes the experimentally validated 32-bit desktop/VR runtime, so the old missing-runtime blocker below no longer describes this build. DOSBox/gameplay are still being tested separately. |
+| Tilt Brush, 11:49 | Unity initializes Direct3D11 and OpenVR; the compositor records 714 submitted guest frames. The actual Unity player log reports a missing `wmic.exe` in `App.Awake`, followed by repeated managed pointer-update null references. Both controllers are disconnected/untracked in this capture. Wine WMIC/provider packaging is being repaired; success in Tilt Brush is not yet established. Certificate trust and unsupported animated-logo media errors are separate findings and remain unresolved. |
+
+The desktop display defaults are now 1280×720 in source, including the Wine
+monitor environment and the initial desktop surface. Geometry/environment
+contracts passed locally. This change has not yet been verified on the headset.
+
+Testing different applications is useful when attempts are sequential and their
+visible outcome is recorded: it distinguishes CPU/child-startup, desktop input,
+graphics, controller, audio and application-specific requirements. Logs can
+contain harmless or caught errors, so an error count alone is not a compatibility
+result. Preserve the per-attempt journal and actual player log, and repeat a
+known working app after a runtime change. The owned x64/x86 desktop, CPU, VR and
+mixed-parent/child fixtures provide narrower controls than another large game.
+
+No game files, Steam installation state or authentication checks were changed
+during this review. Raw game logs and user content remain outside Git.
+
+## 17 October 2026 — historical flat-game review
+
+### Tomb Raider I (Steam 224960)
 
 Reviewed the headset's captured per-attempt journals, launcher/runtime logs,
 Valve's local binary product-info cache, installed app manifest and game folder.

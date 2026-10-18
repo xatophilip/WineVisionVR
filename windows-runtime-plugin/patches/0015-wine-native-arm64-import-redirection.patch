@@ -1,0 +1,25 @@
+# Native ARM64 WOW64 helpers can be imported by an ARM64EC ntdll in an
+# i386 child of an x64 host. Keep x64 importers and exported x64 IATs unchanged.
+--- a/wine/dlls/ntdll/loader.c
++++ b/wine/dlls/ntdll/loader.c
+@@ -1468,14 +1468,18 @@
+      * IAT entries point directly to ARM64 code, avoiding the runtime
+      * arm64x_check_call fast-forward dance.
+      *
+-     * IMPORTANT: only redirect when the IMPORTING module is also ARM64EC.
++     * Native ARM64 importers (notably wow64.dll in an i386 child of an
++     * x64 launcher) also call through their IAT with native BLR. They have
++     * no ARM64EC metadata, but need the same native target. Otherwise
++     * Wow64LdrpInitialize executes ntdll's x64 RtlRunOnceExecuteOnce thunk.
+      * A pure x86_64 importer (e.g. cube-x64.exe under FEX) MUST get the
+      * .hexpthk x86_64 thunk address — not the ARM64 native target — or its
+      * `call qword ptr [iat]` lands on ARM64 instructions interpreted as x86,
+      * corrupts the guest state, and crashes via dispatch_icall with
+      * x11=garbage. */
+     const IMAGE_ARM64EC_METADATA *imp_metadata = NULL;
+-    if (arm64ec_get_module_metadata( module ))  /* importer is ARM64EC */
++    if (arm64ec_get_module_metadata( module ) ||
++        RtlImageNtHeader( module )->FileHeader.Machine == IMAGE_FILE_MACHINE_ARM64)
+         imp_metadata = arm64ec_get_module_metadata( imp_mod );
+ #endif
+ 

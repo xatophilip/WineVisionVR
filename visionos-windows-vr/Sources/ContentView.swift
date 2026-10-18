@@ -78,6 +78,15 @@ struct ContentView: View {
                         ? "[\"--self-test\",\"--trace-input\"]" : "[\"--self-test\"]"
                     await startLaunch()
                 } catch { model.presentLibraryError(error) }
+            } else if LaunchDiagnostics.enabled,
+                      ProcessInfo.processInfo.arguments.contains("--mixed-architecture-child-test"),
+                      !didStartDesktopSmokeTest {
+                didStartDesktopSmokeTest = true
+                do {
+                    try model.selectMixedArchitectureChildTest(
+                        directControl: ProcessInfo.processInfo.arguments.contains("--direct-child-control"))
+                    await startLaunch()
+                } catch { model.presentLibraryError(error) }
             } else if LaunchDiagnostics.enabled, !didStartDesktopSmokeTest,
                       let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--steam-smoke-test=") }),
                       let appID = Int(argument.dropFirst("--steam-smoke-test=".count)) {

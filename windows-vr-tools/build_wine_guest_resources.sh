@@ -74,12 +74,13 @@ export PATH="$AVPPLAY_LLVM_MINGW_ROOT/bin:$PATH"
 # Makefile.in files support PE targets. Enable the actual ARM64EC targets so
 # the farm contains native ARM64EC binaries rather than borrowed ARM64 files.
 wine_build="$runtime_root/wine/build-arm64ec"
-if ! grep -Fq 'programs/wineboot/arm64ec-windows/wineboot.exe:' "$wine_build/Makefile" 2>/dev/null; then
+if ! grep -Fq 'programs/wineboot/arm64ec-windows/wineboot.exe:' "$wine_build/Makefile" 2>/dev/null ||
+   ! grep -Fq 'programs/wmic/arm64ec-windows/wmic.exe:' "$wine_build/Makefile" 2>/dev/null; then
     mkdir -p "$wine_build"
     (
         cd "$wine_build"
         enable_wineboot=arm64ec enable_services=arm64ec enable_rpcss=arm64ec \
-            enable_winedevice=arm64ec enable_plugplay=arm64ec \
+            enable_winedevice=arm64ec enable_plugplay=arm64ec enable_wmic=arm64ec \
             PATH="$AVPPLAY_LLVM_MINGW_ROOT/bin:$PATH" \
             ../configure --enable-archs=arm64ec --without-x --without-freetype --disable-tests --enable-winegstreamer
     )
@@ -96,14 +97,18 @@ JOBS="${AVPPLAY_BUILD_JOBS:-4}" bash "$runtime_root/build/wine-pe/build-modules.
     shdocvw urlmon windowscodecs winspool.drv wintrust \
     advpack compstui hid imagehlp mf netutils rtworkq wined3d \
     dbghelp evr opengl32 d3d9 dxva2 glu32 ieframe sspicli psapi \
-    dwmapi wsock32 avrt vcruntime140 msvcp140 mmdevapi
-# Create the four core Wine executables as ARM64EC PE files, then strip only
-# debug sections before placing them in the guest farm.
+    dwmapi wsock32 avrt vcruntime140 msvcp140 mmdevapi wbemprox
+# Build the genuine pinned Wine programs, including WMIC for WMI consumers.
+# wbemprox supplies its in-process provider; the existing prefix registration
+# and WineProcessBridge system32\wbem links locate it without a registry edit.
+# Upstream Win32_BIOS.SerialNumber remains Wine's placeholder, not hardware identity.
+# Strip only debug sections before placing them in the guest farm.
 core_program_targets=(
     programs/wineboot/arm64ec-windows/wineboot.exe
     programs/services/arm64ec-windows/services.exe
     programs/winedevice/arm64ec-windows/winedevice.exe
     programs/rpcss/arm64ec-windows/rpcss.exe
+    programs/wmic/arm64ec-windows/wmic.exe
 )
 make -C "$wine_build" -j"${AVPPLAY_BUILD_JOBS:-4}" "${core_program_targets[@]}"
 for target in "${core_program_targets[@]}"; do
@@ -112,6 +117,33 @@ for target in "${core_program_targets[@]}"; do
     "$AVPPLAY_LLVM_MINGW_ROOT/bin/arm64ec-w64-mingw32-strip" --strip-debug "$output.tmp"
     mv "$output.tmp" "$output"
 done
+# Check the newly packaged WMI roots and their transitive PE import/forwarder
+# providers. Dynamic COM activation and query execution still require a device test.
+python3 - "$repo_root" "$wine_farm" "$AVPPLAY_LLVM_MINGW_ROOT" <<'WMI'
+import json,pathlib,subprocess,sys
+repo,farm,toolchain=map(pathlib.Path,sys.argv[1:])
+sys.path.insert(0,str(repo/'windows-vr-tools'))
+from verify_wine_imports import dependencies
+from stage_resources import is_arm64ec_pe
+available={p.name.casefold():p for p in farm.iterdir() if p.is_file() and p.suffix.lower() in ('.dll','.exe','.drv')}
+pending=['wmic.exe','wbemprox.dll'];checked=set();missing={}
+for name in pending:
+    if name not in available or not is_arm64ec_pe(available[name]):
+        raise SystemExit('WMI root must be a freshly built ARM64EC PE: '+name)
+while pending:
+    name=pending.pop()
+    if name in checked:continue
+    path=available[name]
+    imports=subprocess.check_output([str(toolchain/'bin/llvm-readobj'),'--coff-imports',str(path)],text=True)
+    exports=subprocess.check_output([str(toolchain/'bin/llvm-objdump'),'-p',str(path)],text=True)
+    checked.add(name)
+    for dependency in dependencies(imports,exports):
+        if dependency.startswith(('api-ms-','ext-ms-')):continue
+        if dependency not in available:missing.setdefault(dependency,[]).append(name)
+        elif dependency not in checked:pending.append(dependency)
+if missing:raise SystemExit('Missing WMI PE providers: '+json.dumps(missing,sort_keys=True))
+print('Verified genuine Wine WMIC/WBEM PE import and forwarder closure across',len(checked),'binaries; query not executed.')
+WMI
 # The pinned aarch64 farm is missing Wine's winedevice service. Build that
 # target from the same Wine source and place the unmodified PE in its farm.
 wine_aarch64_build="$runtime_root/wine/build-avp-aarch64"

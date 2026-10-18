@@ -1,0 +1,11 @@
+{
+  "id": "winevision.mixed-architecture-child",
+  "title": "64-bit launcher to 32-bit child startup test",
+  "executableRelativePath": "parent64.exe",
+  "backend": "windowsWineFEX",
+  "graphics": "direct3D11",
+  "launchArguments": [],
+  "presentation": "desktop",
+  "schemaVersion": 1,
+  "guestArchitecture": "x64"
+}

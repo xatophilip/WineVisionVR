@@ -952,6 +952,51 @@ final class LauncherModel {
         launchError = nil
     }
 
+    func selectMixedArchitectureChildTest(directControl: Bool = false) throws {
+        guard canChangeSelection else { return }
+        guard let resource = Bundle.main.url(forResource: "MixedArchitectureChild", withExtension: nil),
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let source = resource.appendingPathComponent(directControl ? "direct" : "mixed", isDirectory: true)
+        let demo = try JSONDecoder().decode(WindowsGameManifest.self,
+            from: Data(contentsOf: source.appendingPathComponent("manifest.json")))
+        guard demo.presentation == .desktop,
+              demo.guestArchitecture == (directControl ? .x86 : .x64),
+              demo.executableRelativePath == (directControl ? "child32.exe" : "parent64.exe") else {
+            throw WindowsGameManifestError.invalidLaunchConfiguration
+        }
+        let fm = FileManager.default
+        let directory = documents.appendingPathComponent("WindowsVR/Apps/" +
+            (directControl ? "DirectChildControl" : "MixedArchitectureChild"), isDirectory: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard isAppOwnedURL(directory), directory.standardizedFileURL == directory.resolvingSymlinksInPath().standardizedFileURL else {
+            throw ImportFailure.folderAccessDenied
+        }
+        for name in directControl ? ["child32.exe"] : ["parent64.exe", "child32.exe"] {
+            let executable = directory.appendingPathComponent(name)
+            let values = try? executable.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+            guard values?.isSymbolicLink != true, values?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
+            try Data(contentsOf: source.appendingPathComponent(name)).write(to: executable, options: .atomic)
+        }
+        // Only an owned fixture's marker is removed; a failed startup cannot reuse a previous pass.
+        let marker = directory.appendingPathComponent(directControl ? "direct-child-result.json" : "mixed-child-result.json")
+        let markerValues = try? marker.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+        guard markerValues?.isSymbolicLink != true, markerValues?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
+        if markerValues?.isRegularFile == true { try fm.removeItem(at: marker) }
+        releaseGameDirectoryAccess()
+        manifest = demo
+        presentationModeDraft = .desktop
+        manifestName = directControl ? "Built-in direct 32-bit child control" : "Built-in 64-bit launcher to 32-bit child test"
+        gameDirectory = directory
+        gameFolderName = directory.lastPathComponent
+        selectedLibraryEntryID = nil
+        selectedProfileID = nil
+        renderScaleDraft = 1
+        launchArgumentsText = "[]"
+        launchError = nil
+    }
+
     func waitForCompositorReady(timeout: Duration = .seconds(12)) async throws {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {

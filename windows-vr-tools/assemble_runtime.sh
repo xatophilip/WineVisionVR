@@ -262,6 +262,8 @@ bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
 if [[ "$x86_enabled" == 1 ]]; then
     AVPPLAY_DESKTOP_DEMO_ARCH=x86 bash "$ROOT/windows-vr-tools/build_desktop_demo.sh"
     AVPPLAY_VR_SMOKE_ARCH=x86 bash "$ROOT/windows-vr-tools/build_vr_smoke.sh"
+    AVPPLAY_MIXED_CHILD_OUTPUT="$ROOT/visionos-windows-vr/Resources/MixedArchitectureChild" \
+        bash "$ROOT/windows-vr-tools/build_mixed_architecture_child.sh"
 fi
 
 xcodegen generate --spec "$app_spec" \

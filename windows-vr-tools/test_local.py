@@ -99,8 +99,11 @@ def main():
     if env.get('AVPPLAY_LLVM_MINGW_ROOT') and (Path(env['AVPPLAY_LLVM_MINGW_ROOT']) / 'bin/i686-w64-mingw32-clang').is_file():
         run('desktop-demo-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_demo_selection.py',
                                       '--build', build / 'desktop-demo-selection'])
+        run('mixed-child-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_mixed_child_selection.py',
+                                     '--build', build / 'mixed-child-selection'])
     else:
         skip('desktop-demo-selection', 'Set AVPPLAY_LLVM_MINGW_ROOT to compile real x64/i386 fixture executables')
+        skip('mixed-child-selection', 'Set AVPPLAY_LLVM_MINGW_ROOT to compile real x64/i386 fixture executables')
     run('desktop-input', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_input.py',
                           '--build', build / 'desktop-input'])
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
@@ -164,6 +167,21 @@ def main():
         skip('window-parent-cache', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('mouse-activation', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('jit-pool-arbitration', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+
+    if runtime_source and all((runtime_source / "app/Madeira" / name).is_file() for name in
+                              ("aarch64-windows/wow64.dll", "arm64ec-windows/ntdll.dll")):
+        run('native-arm64-import-redirection', [python, 'windows-runtime-plugin/Tests/test_native_arm64_import_redirection.py',
+                                               '--runtime-source', runtime_source,
+                                               '--build', build / 'native-arm64-import-redirection'])
+    else:
+        skip('native-arm64-import-redirection', 'Requires prepared runtime with app/Madeira ARM64 wow64 and ARM64EC ntdll PE fixtures')
+
+    if runtime_source and (runtime_source / 'wine/programs/wmic/main.c').is_file():
+        run('wine-wmic-provider', [python, 'windows-runtime-plugin/Tests/test_wine_wmic_provider.py',
+                                   '--runtime-source', runtime_source,
+                                   '--build', build / 'wine-wmic-provider'])
+    else:
+        skip('wine-wmic-provider', 'Requires prepared pinned Wine WMIC and wbemprox source')
 
     modern_source = args.dxmt_modern_wow64_source
     if modern_source is None and env.get('AVPPLAY_D3D12_PROFILE_SOURCE'):

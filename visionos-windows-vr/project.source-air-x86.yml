@@ -2,3 +2,9 @@
 include:
   - project.source-air.yml
   - project.x86.yml
+targets:
+  VisionOSWindowsVR:
+    sources:
+      - path: Resources/MixedArchitectureChild
+        type: folder
+        buildPhase: resources
