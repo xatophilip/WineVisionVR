@@ -3,8 +3,8 @@
 This work is isolated on `codex/modern-x86-support`. It is not part of the
 published working branch or the currently installed main app. The authored 32-bit
 desktop app now passes its headset self-test, including pointer input; physical
-Count clicks taps also work. The 32-bit CPU fixture passes on the headset.
-No 32-bit game is confirmed playable by these changes yet.
+Count clicks taps also work. The 32-bit CPU fixture passes on the headset, and
+the 32-bit VR scene renders in both eyes with head tracking. No 32-bit game is confirmed playable by these changes yet.
 
 ## Problems found in captured diagnostics
 
@@ -451,3 +451,25 @@ the same dark blue background. This visual-only fixture change requires new
 EXEs and local revalidation before its next device installation; the successful
 rendering observations above refer to the original r4 two-colour fixture.
 32-bit game compatibility, including Audioshield, remains unconfirmed.
+
+
+### Matching-background package validation
+
+Commit `03453cf` was exported into an isolated source archive. Both VR fixture
+EXEs were rebuilt, then overlaid onto a copy of the verified r4 app and its
+outer bundle re-signed using the original entitlement values and provisioning
+profile. All 1,110 app paths were compared: only the two VR EXEs, their build
+receipts, the outer resource seal and main executable signing data changed.
+Native code/data and every embedded framework/runtime resource stayed identical;
+the main Mach-O changed only its signature and two signature-size bookkeeping
+fields. No native engine relink or profile rebuild was performed or claimed.
+
+Both x64/i386 desktop self-tests and CPU self-tests passed again using exact
+final packaged executable hashes. An independent agent verified this package
+comparison, local results and deep/strict signature validation. The cosmetic
+package installed separately at bundle `D2A2DC24-929E-4A3B-A88A-3A675B77CC97`.
+Its automatic open request timed out after 20 seconds; manual opening and a
+cosmetic visual confirmation remain pending. The prior r4 visual confirmation
+does not establish that the cosmetic package was observed.
+Build, source export, artifact comparison, runtime-reuse proof, local test logs
+and signing evidence are retained under `x86-modern-oct18-r4-background`.
