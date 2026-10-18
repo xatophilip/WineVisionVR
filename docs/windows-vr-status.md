@@ -9,7 +9,35 @@ absent, preserving existing configurations and all original hive bytes.
 The 34-case sanitizer contract and complete visionOS SDK syntax check pass.
 An isolated real guest32 probe fails before this helper, then passes all three
 provider acquisition/random-generation checks afterward. This is Mac Wine API
-proof; a signed rebuild and headset Audioshield retest remain pending.
+proof, not game acceptance.
+
+The signed r15b app/plugin build from
+`3b768c6a97e34105bcdb2c4bd27acdfe0178ab92` passes strict validation. It freshly
+compiles the changed host adapter and wrapper targets against unchanged audited
+r14 vendor runtime/resources from `a4af9f0c31b3cf54b426e430116b6a8958007943`.
+The old broad runtime fingerprint remains bound to that original source;
+no vendor binary is relabeled as rebuilt. The previous exact-packaged six Mac
+controls are reused by immutable PE hashes, not claimed rerun. The first r15
+attempt was interrupted after local audit scripts changed during input capture;
+that whole attempt is retained, and r15b starts in a fresh sealed output folder.
+
+`prefix-csp-oct18-r15b/verified-app-complete.json` has SHA-256
+`d165bb4cf5268ccfebaa2263648ac5ca27cbd23dda98e05cf104ccc916b0b171`.
+App UUID is `D944CC52-D4CA-3266-A165-D630F52900AB`; plugin UUID is
+`A978C539-3048-364A-81CB-BC4D855B5E5D`. Physical installation/launch and
+Audioshield startup remain pending; the first install connection was interrupted
+while the headset reported locked. A subsequent device listing still points to
+the previous installed bundle, so deployment is not claimed successful. No reset
+or uninstall was performed. Independent full-package review is retained at
+`crypto-provider-oct18/independent-review/r15b-final-package-review.json`, SHA-256
+`25608c2f2ccaa62165568d7a79b2aea3064577e4a3e68efbb4b602626ca6561e`.
+
+The space-recovery follow-up archived and SHA-verified 1283 regenerable pip and
+Homebrew cache files before removing only unchanged originals, reclaiming about
+83 MiB. Its external ledger is
+`local-space-recovery-oct18/cache-agent-r15-20261018T183440Z/ledger.json`, SHA-256
+`c3641d3da61d415e97ee19cc3d3f82e1a002b549bfcff560c191b3782541964e`.
+No user files, signing/pairing data or active Xcode database were removed.
 See [the repair, dependencies and evidence](windows-wow64-crypto-prefix.md).
 
 
