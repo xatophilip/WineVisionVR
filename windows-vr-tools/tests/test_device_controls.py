@@ -67,12 +67,20 @@ def setup(directory):
     return app, verified, install
 
 
+def copy_error():
+    return dict(info=dict(outcome='failed',commandType='devicectl.device.copy.from'),
+                error=dict(domain='com.apple.dt.CoreDeviceError',code=7000,userInfo=dict(
+                    NSUnderlyingError=dict(error=dict(domain='NSPOSIXErrorDomain',code=60,userInfo=dict(
+                        NSLocalizedFailureReason=dict(string='The file service client failed to read data from the network socket because the socket was closed unexpectedly.')))))))
+
+
 class FakeDevice:
     def __init__(self, clock, output, app, mode):
         self.clock, self.output, self.app, self.mode = clock, output, app, mode
         self.calls, self.launches, self.variant = [], [], None
         self.pid, self.launched, self.lock_calls = 90, None, 0
         self.disconnected = False
+        self.copy_failures = 0
 
     def row(self, name, data, old=False):
         modified = self.clock.time()-100 if old else self.launched
@@ -191,6 +199,13 @@ class FakeDevice:
                 if self.mode == 'wrong-pe': data += b'wrong'
             else: data = self.marker_data(Path(source).name)
             destination.write_bytes(data)
+            if self.mode in ('copy-transient','copy-persistent','copy-malformed') and source.endswith('launcher-log.txt'):
+                if self.mode!='copy-transient' or self.copy_failures==0:
+                    self.copy_failures+=1
+                    document=copy_error()
+                    if self.mode=='copy-malformed':document['error']['userInfo']['NSUnderlyingError']['error']['code']=61
+                    m.save(self.output/'raw'/f'{len(self.calls):04d}-{tag}.json',document)
+                    return m.Result(document,1)
         else: raise AssertionError(arguments)
         document = dict(info=dict(outcome=outcome), result=result)
         if self.disconnected: document['error'] = dict(domain='CoreDeviceDisconnected', code=1)
@@ -234,6 +249,13 @@ def case(build, mode, expected):
         else:assert len(fake.launches) <= 1, 'Direct failure must prevent mixed launch'
     if mode in ('timeout-started','cli-timeout-started'):
         assert all(p['launchCommandTimedOut'] for p in report['phases'])
+    if mode=='copy-transient':
+        assert controls.copy_retries==1 and fake.copy_failures==1
+    if mode in ('copy-persistent','copy-malformed'):
+        assert controls.transport_failed and fake.pid is not None
+        assert fake.copy_failures==(3 if mode=='copy-persistent' else 1)
+        assert not list(output.rglob('*.partial'))
+        assert not list((output/'direct').glob('capture-*/launcher.txt')), 'Failed copy must not publish plausible launcher proof'
     if mode=='rotation':
         assert all(list((output/p).glob('capture-*/launcher.previous-1.txt')) for p in ('direct','mixed'))
         assert all(p['proof']['launcherProofFiles']==['launcher.previous-1.txt','launcher-log.txt'] for p in report['phases'])
@@ -324,6 +346,71 @@ def transport_contract(build):
     print('PASS production transport: exact argv, bounded timeout, externalTMPDIR, launch env isolation and raw failure records')
 
 
+def copy_contract(build):
+    directory=build/'copy-contract'
+    directory.mkdir()
+    for field in ('info','error'):
+        for malformed in (None,[], 'invalid'):
+            document=copy_error()
+            document[field]=malformed
+            assert not m.transient_copy(m.Result(document,1))
+    document=copy_error()
+    assert m.transient_copy(m.Result(document,1))
+    for name,value in (('commandType','devicectl.device.process.launch'),('outcome','success')):
+        document=copy_error()
+        document['info'][name]=value
+        assert not m.transient_copy(m.Result(document,1))
+    for value in ('The socket was closed.',None):
+        document=copy_error()
+        document['error']['userInfo']['NSUnderlyingError']['error']['userInfo']['NSLocalizedFailureReason']['string']=value
+        assert not m.transient_copy(m.Result(document,1))
+    assert not m.transient_copy(m.Result(copy_error(),1,True))
+    for mode in ('global-cap','deadline','partial-marker','malformed','launch','terminate'):
+        clock=Clock()
+        controls=object.__new__(m.Controls)
+        controls.c=SimpleNamespace(device=DEVICE,command_timeout=20.0)
+        controls.clock=clock
+        controls.copy_retries=0
+        controls.report={}
+        controls.transport_failed=False
+        calls=[]
+        destination=directory/(mode+'.json')
+        class Boundary:
+            def call(self,arguments,tag,timeout,trailing=()):
+                calls.append(arguments)
+                clock.tick+=.02
+                if arguments[1:3]==['copy','from']:
+                    stage=Path(arguments[arguments.index('--destination')+1])
+                    assert stage!=destination and not destination.exists()
+                    assert not list(directory.glob('*.partial')), 'Previous partial must be removed before retry'
+                    # Even exact complete valid proof bytes from a failed copy
+                    # must never be published or accepted.
+                    stage.write_text(json.dumps(m.FINAL))
+                if mode=='global-cap' and len(calls)%2==0:
+                    return m.Result(dict(info=dict(outcome='success')),0)
+                document=copy_error()
+                if mode=='malformed':document['error']=None
+                return m.Result(document,1)
+        controls.boundary=Boundary()
+        try:
+            if mode in ('launch','terminate'):
+                controls.call(['process',mode],mode,50,launch=mode=='launch')
+            elif mode=='global-cap':
+                for n in range(5):
+                    assert controls.copy('Documents/proof.json',destination,50,'copy')
+                    destination.unlink()
+            else:
+                controls.copy('Documents/proof.json',destination,1.5 if mode=='deadline' else 50,'copy')
+        except m.BoundaryError:pass
+        else:raise AssertionError('Expected bounded closed failure: '+mode)
+        expected={'global-cap':9,'deadline':1,'partial-marker':3,'malformed':1,'launch':1,'terminate':1}[mode]
+        assert len(calls)==expected,(mode,len(calls))
+        assert controls.transport_failed and not destination.exists()
+        assert not list(directory.glob('*.partial'))
+        assert clock.tick<50
+    print('PASS production copy: exact class, global/attempt/deadline caps, no action retries, failed valid markers isolated')
+
+
 def cli_help_contract(build):
     # --help exits in the argument parser; no device is named or queried.
     for token, expected in (('20',0),('2',0),('20.0',64)):
@@ -347,9 +434,11 @@ def main():
     build = Path(tempfile.mkdtemp(prefix='device-controls-contract-', dir=a.build.resolve()))
     if a.cli_help: cli_help_contract(build)
     transport_contract(build)
+    copy_contract(build)
     m.verify_local_signature=lambda app,tmpdir=None:dict(scope='deterministic fake signing boundary',returnCode=0)
     for mode, expected in [('success', True), ('unlock-later', True), ('rotation',True),
-                           ('stale-archive',False),('rotation-other-pid',False),('archive-changed',False),('stale', False),
+                           ('stale-archive',False),('rotation-other-pid',False),('archive-changed',False),
+                           ('copy-transient',True),('copy-persistent',False),('copy-malformed',False),('stale', False),
                            ('stale-logs', False), ('stale-exit', False), ('timeout-started', True),
                            ('cli-timeout-started',True),('cli-invalid-arguments',False),('child-only-exit',False),('mutated-resource',False), ('timeout-no-start', False),
                            ('disconnect', False), ('locked', False), ('wrong-uuid', False),

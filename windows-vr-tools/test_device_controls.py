@@ -30,6 +30,10 @@ PARENT_PASS = ('PASS: x64 parent -> i386 child, RtlRunOnce callback once, VEH on
                'i386 context/stack, resumed after RaiseException, fresh markers, child exit 0')
 LAUNCHER_ARCHIVES = tuple(f'launcher.previous-{n}.txt' for n in (3, 2, 1))
 MAX_LAUNCHER_BYTES = 8 * 1024 * 1024
+COPY_ATTEMPTS = 3
+COPY_RETRY_LIMIT = 4
+COPY_SOCKET_REASON = ('The file service client failed to read data from the network socket '
+                      'because the socket was closed unexpectedly.')
 BEFORE = dict(fixture='mixed-architecture-child-v1', stage='beforeRaiseException',
               pointerBits=32, callbacks=1, exceptionCode=0xe0425648)
 
@@ -59,17 +63,34 @@ class Result:
 
     @property
     def success(self):
-        return self.code == 0 and not self.timed_out and self.document.get('info', {}).get('outcome') == 'success'
+        info = self.document.get('info') if isinstance(self.document, dict) else None
+        return self.code == 0 and not self.timed_out and isinstance(info, dict) and info.get('outcome') == 'success'
 
     @property
     def timeout(self):
-        outcome = self.document.get('info', {}).get('outcome')
-        error = self.document.get('error', {})
+        info = self.document.get('info') if isinstance(self.document, dict) else None
+        outcome = info.get('outcome') if isinstance(info, dict) else None
+        error = self.document.get('error') if isinstance(self.document, dict) else None
+        error = error if isinstance(error, dict) else {}
         cli_timeout = (self.code == 2 and outcome in ('failed', 'failure') and
                        error.get('domain') == 'ArgumentParserInternal.ExitCode' and error.get('code') == 2 and
                        re.search(r'^ERROR: Command timeout of [0-9]+(?:\.[0-9]+)? seconds exceeded\. '
                                  r'Assuming command got stuck and aborting\.\r?$', self.stderr, re.MULTILINE))
         return bool(self.timed_out or outcome == 'timeout' or cli_timeout)
+
+
+def transient_copy(result):
+    # Observed CoreDevice copy-from failure only; no recursive/domain-only match.
+    try:
+        info, error = result.document['info'], result.document['error']
+        underlying = error['userInfo']['NSUnderlyingError']['error']
+        return (not result.timed_out and type(result.code) is int and result.code != 0 and
+                info['outcome'] == 'failed' and info['commandType'] == 'devicectl.device.copy.from' and
+                error['domain'] == 'com.apple.dt.CoreDeviceError' and type(error['code']) is int and error['code'] == 7000 and
+                underlying['domain'] == 'NSPOSIXErrorDomain' and type(underlying['code']) is int and underlying['code'] == 60 and
+                underlying['userInfo']['NSLocalizedFailureReason']['string'] == COPY_SOCKET_REASON)
+    except (KeyError, TypeError):
+        return False
 
 
 def missing_file(document):
@@ -258,16 +279,18 @@ class Controls:
         self.boundary = boundary or Devicectl(self.output)
         self.identity = package_identity(config.verified_app, config.install_receipt, config.device, self.output/'tmp')
         self.owned_pid, self.transport_failed = None, False
+        self.copy_retries = 0
         self.report = dict(scope='Installed owned diagnostic controls only; no game/interactive-controller claims',
                            package=self.identity, phases=[], passed=False)
 
-    def call(self, args, tag, deadline, trailing=(), missing=False, launch=False):
+    def call(self, args, tag, deadline, trailing=(), missing=False, launch=False, copy_read=False):
         remaining = deadline - self.clock.monotonic()
         if remaining < 1:
             raise ControlError('Less than one second remains before phase deadline')
         result = self.boundary.call(['device', *args, '--device', self.c.device], tag,
                                    min(self.c.command_timeout, remaining), trailing)
-        if result.success or (missing and missing_file(result.document)) or (launch and result.timeout):
+        if (result.success or (missing and missing_file(result.document)) or (launch and result.timeout) or
+            (copy_read and args[:2] == ['copy', 'from'] and transient_copy(result))):
             return result
         self.transport_failed = True
         raise BoundaryError(f'devicectl failed at {tag}; raw result preserved')
@@ -283,9 +306,35 @@ class Controls:
         return metadata(result.document, subdir) if result.success else {}
 
     def copy(self, remote, destination, deadline, tag, optional=False):
-        result = self.call(['copy', 'from', '--domain-type', 'appDataContainer', '--domain-identifier', BUNDLE,
-                            '--source', remote, '--destination', str(destination)], tag, deadline, missing=optional)
-        return result.success
+        destination = Path(destination)
+        for attempt in range(1, COPY_ATTEMPTS + 1):
+            # Publish only a successful attempt. A truncated transfer, including
+            # a plausible complete marker followed by a socket error, is never proof.
+            staging = destination.with_name('.'+destination.name+'.copy-'+uuid.uuid4().hex+'.partial')
+            try:
+                result = self.call(['copy', 'from', '--domain-type', 'appDataContainer', '--domain-identifier', BUNDLE,
+                                    '--source', remote, '--destination', str(staging)],
+                                   tag if attempt == 1 else tag+'-retry-'+str(attempt), deadline,
+                                   missing=optional, copy_read=True)
+                if not transient_copy(result):
+                    if attempt > 1:
+                        self.transport_failed = False
+                    if result.success:
+                        if staging.is_symlink() or not staging.is_file():
+                            raise ControlError('Copy did not produce a regular owned staging file')
+                        staging.replace(destination)
+                    return result.success
+                self.transport_failed = True
+            finally:
+                staging.unlink(missing_ok=True)
+            delay = attempt  # One then two seconds; never extend the phase.
+            if (attempt == COPY_ATTEMPTS or self.copy_retries >= COPY_RETRY_LIMIT or
+                deadline - self.clock.monotonic() < delay + 1):
+                raise BoundaryError(f'devicectl copy retry budget exhausted at {tag}; raw results preserved')
+            self.copy_retries += 1
+            self.report.setdefault('copyRetries', []).append(dict(source=remote, tag=tag,
+                        nextAttempt=attempt+1, backoffSeconds=delay, totalRetries=self.copy_retries))
+            self.clock.sleep(delay)
 
     def wait_unlocked(self, deadline, label):
         while True:
