@@ -16,6 +16,8 @@ static WNDPROC original_button_proc;
 static const WCHAR *note_path = L"demo-note.txt";
 static BOOL last_save_ok, last_load_ok;
 static unsigned self_test_step, self_test_initial_clicks;
+static BOOL trace_input;
+static unsigned input_trace_count;
 
 
 /* Diagnostic events contain IDs/counts only, never the user's note text. */
@@ -29,7 +31,33 @@ static void trace(const char *event) {
     CloseHandle(file);
 }
 
+/* Opt-in fixture diagnostics: IDs and coordinates only, bounded to avoid
+ * flooding persistent logs during normal desktop use. */
+static BOOL is_input_trace_message(UINT message) {
+    return (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST && message != WM_MOUSEMOVE) ||
+        (message >= WM_NCMOUSEMOVE && message <= WM_NCXBUTTONDBLCLK && message != WM_NCMOUSEMOVE);
+}
+
+static void trace_input_message(const char *stage, const MSG *msg, LRESULT result) {
+    if (!trace_input || !is_input_trace_message(msg->message) || input_trace_count >= 256) return;
+    char line[280];
+    snprintf(line, sizeof(line),
+        "input #%u %s hwnd=%p msg=0x%x wp=0x%llx lp=0x%llx pt=%ld,%ld result=%lld active=%p foreground=%p",
+        ++input_trace_count, stage, msg->hwnd, msg->message,
+        (unsigned long long)msg->wParam, (unsigned long long)(ULONG_PTR)msg->lParam,
+        (long)msg->pt.x, (long)msg->pt.y, (long long)result, GetActiveWindow(), GetForegroundWindow());
+    trace(line);
+}
+
+static void trace_input_callback(const char *stage, HWND window, UINT event,
+                                 WPARAM wparam, LPARAM lparam, LRESULT result) {
+    MSG msg = {0};
+    msg.hwnd = window; msg.message = event; msg.wParam = wparam; msg.lParam = lparam;
+    trace_input_message(stage, &msg, result);
+}
+
 static LRESULT CALLBACK button_proc(HWND window, UINT event, WPARAM wparam, LPARAM lparam) {
+    trace_input_callback("button-before", window, event, wparam, lparam, 0);
     if ((event >= WM_MOUSEFIRST && event <= WM_MOUSELAST && event != WM_MOUSEMOVE) ||
         event == BM_CLICK || event == WM_CAPTURECHANGED || event == WM_CANCELMODE) {
         char text[100];
@@ -37,6 +65,7 @@ static LRESULT CALLBACK button_proc(HWND window, UINT event, WPARAM wparam, LPAR
         trace(text);
     }
     LRESULT result = CallWindowProcW(original_button_proc, window, event, wparam, lparam);
+    trace_input_callback("button-after", window, event, wparam, lparam, result);
     if (event == WM_MOUSEACTIVATE) {
         char text[160];
         snprintf(text, sizeof(text), "button activate id=%d result=%lld active=%p foreground=%p",
@@ -82,6 +111,7 @@ static void load_note(void) {
 }
 
 static LRESULT CALLBACK window_proc(HWND window, UINT event, WPARAM wparam, LPARAM lparam) {
+    trace_input_callback("parent-entry", window, event, wparam, lparam, 0);
     switch (event) {
     case WM_CREATE:
         trace("window created");
@@ -212,6 +242,8 @@ static LRESULT CALLBACK window_proc(HWND window, UINT event, WPARAM wparam, LPAR
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show) {
     (void)previous;
+    trace_input = wcsstr(command_line, L"--trace-input") != NULL;
+    if (trace_input) trace("input trace enabled; maximum 256 mouse-stage records");
     WNDCLASSW cls = {0};
     cls.lpfnWndProc = window_proc;
     cls.hInstance = instance;
@@ -229,7 +261,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     MSG msg;
     int result;
     while ((result = GetMessageW(&msg, NULL, 0, 0)) > 0) {
-        if (!IsDialogMessageW(window, &msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+        trace_input_message("GetMessage", &msg, result);
+        MSG before_filter = msg;
+        BOOL filtered = IsDialogMessageW(window, &msg);
+        trace_input_message("filter-before", &before_filter, filtered);
+        trace_input_message("filter-after", &msg, filtered);
+        if (!filtered) {
+            TranslateMessage(&msg);
+            trace_input_message("dispatch-before", &msg, 0);
+            LRESULT dispatched = DispatchMessageW(&msg);
+            trace_input_message("dispatch-after", &msg, dispatched);
+        }
     }
     return result < 0 ? 3 : (int)msg.wParam;
 }

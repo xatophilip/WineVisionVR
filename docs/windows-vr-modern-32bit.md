@@ -243,3 +243,23 @@ retained locally under `x86-modern-oct17-r3`. A newer codesign tool defaults to
 abstract entitlement output; the external verification script explicitly uses
 `--xml` before parsing it. This was a verification-script correction after a
 successful signed build, not an app source or signing change.
+
+
+## 18 October retest: pointer failure persists
+
+The r3 runtime was confirmed running by its installed bundle path and matching
+plugin UUID `7CD7B730-72DE-3A40-BB81-A80260C15474`. The new startup watchdog
+correctly detected ntdll. The desktop result still failed only its pointer-click
+check; edit, programmatic button, save, load and UTF-8 round trip passed again.
+The user confirmed manual Count clicks still did nothing. Disassembly confirms
+patch `0013` is present in the running native message path, so that patch alone
+does not resolve this failure. No further behavioral fix is claimed.
+
+An opt-in `--trace-input` mode in the authored fixture now records up to 256
+non-move mouse stages around GetMessage, IsDialogMessage and DispatchMessage,
+plus child/parent callback entries and results. It preserves the self-test pass
+criteria and never logs note contents. The separately transferred i386 fixture
+is titled **32-bit input trace**. It uses the installed r3 runtime; no native
+runtime or app rebuild was needed. Temporary native `trace+win` output can be
+enabled for this diagnostic via the host app environment
+`MADEIRA_DEBUG_VERBOSE=1`; the bridge overrides direct WINEDEBUG values.
