@@ -1,5 +1,29 @@
 # Windows VR implementation status
 
+## Pending runtime update: The Lab and Tilt Brush (2026-10-18)
+
+The Lab now receives its officially supported `-noaq -aqmaxscale 1` settings
+through the shared Steam launch configuration. Valve's renderer disables adaptive
+quality and resets its render/viewport scale to 1. This prevents the observed
+1.4× atlas growth while keeping the existing rendering and allocation bounds.
+Only Steam app 450390 gets these defaults; explicit launch text is retained.
+The actual helper/configuration contract passes. The incomplete experimental
+wider-swapchain change was archived externally and is not part of this update.
+See [ValveCamera.cs](https://github.com/ValveSoftware/the_lab_renderer/blob/master/Assets/TheLabRenderer/Scripts/ValveCamera.cs).
+
+Patch `0018-wine-translated-x86-cache-topology.patch` corrects successful Windows
+cache-topology API results to 64-byte lines for translated i386/AMD64/ARM64EC
+callers on ARM64. Native ARM callers, actual Intel hosts, errors and shared
+native topology remain unchanged. Actual production API/WinNT/Rtl functions
+pass controlled ASan/UBSan contracts and all three real Windows target syntax
+checks. Source and compiled-object inspection confirms this embedded wineserver
+reports native ARM64, so the guard applies to this platform. The existing owned
+x64/i386 cube fixtures now log the actual cache API result for headset acceptance.
+
+These are source/local validation results. A new signed runtime, post-fix game
+acceptance and headset cache-line values remain pending. The unrelated 32-bit
+atomic patch 0017 and standalone atomic probes remain separate work in progress.
+
 ## Latest signed package: launcher action rows (2026-10-18)
 
 The r10 main app built from `e8572e69692560d4b62063977c8955681be251f0`,

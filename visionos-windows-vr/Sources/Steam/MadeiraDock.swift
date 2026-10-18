@@ -421,7 +421,8 @@ enum MadeiraDock {
     }
 
     @MainActor static func configure(_ game: DockGame, launchOption: UInt32 = 0, argumentsOverride: String? = nil) {
-        if let arguments = argumentsOverride ?? extraLaunchArguments(appID: game.id) {
+        if let arguments = SteamLabCompatibility.arguments(appID: game.id,
+            base: argumentsOverride ?? extraLaunchArguments(appID: game.id)) {
             setenv("MADEIRA_STEAM_HOST_EXTRA_ARGS", arguments, 1)
         } else {
             unsetenv("MADEIRA_STEAM_HOST_EXTRA_ARGS")

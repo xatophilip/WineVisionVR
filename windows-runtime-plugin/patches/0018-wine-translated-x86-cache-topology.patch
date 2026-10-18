@@ -1,0 +1,60 @@
+# Normalize returned cache-line sizes only for x86/i386/ARM64EC PE callers
+# on a native ARM64 host; leave shared Darwin topology and ARM callers intact.
+--- a/wine/dlls/kernelbase/memory.c
++++ b/wine/dlls/kernelbase/memory.c
+@@ -1497,6 +1497,20 @@
+ }
+ 
+ 
++/* FEX describes an x86 cache line as 64 bytes. Keep translated x86 API
++ * results consistent with that CPUID contract without changing the shared
++ * native ARM topology (or real Intel hosts). Pure ARM64 callers retain it. */
++static BOOL use_translated_x86_cache_lines(void)
++{
++#if defined(__i386__) || defined(__x86_64__) || defined(__arm64ec__)
++    USHORT native_machine;
++    return !RtlWow64GetProcessMachines( 0, NULL, &native_machine ) &&
++           native_machine == IMAGE_FILE_MACHINE_ARM64;
++#else
++    return FALSE;
++#endif
++}
++
+ /***********************************************************************
+  *           GetLogicalProcessorInformation   (kernelbase.@)
+  */
+@@ -1511,6 +1525,12 @@
+         return FALSE;
+     }
+     status = NtQuerySystemInformation( SystemLogicalProcessorInformation, buffer, *len, len );
++    if (!status && buffer && use_translated_x86_cache_lines())
++    {
++        DWORD i, count = *len / sizeof(*buffer);
++        for (i = 0; i < count; ++i)
++            if (buffer[i].Relationship == RelationCache) buffer[i].Cache.LineSize = 64;
++    }
+     if (status == STATUS_INFO_LENGTH_MISMATCH) status = STATUS_BUFFER_TOO_SMALL;
+     return set_ntstatus( status );
+ }
+@@ -1531,6 +1551,21 @@
+     }
+     status = NtQuerySystemInformationEx( SystemLogicalProcessorInformationEx, &relationship,
+                                          sizeof(relationship), buffer, *len, len );
++    if (!status && buffer && use_translated_x86_cache_lines())
++    {
++        DWORD offset = 0;
++        const DWORD header_size = FIELD_OFFSET( SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Processor );
++        const DWORD line_end = FIELD_OFFSET( SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Cache.LineSize ) +
++                               sizeof(buffer->Cache.LineSize);
++        while (*len - offset >= header_size)
++        {
++            SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *entry =
++                (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)((char *)buffer + offset);
++            if (entry->Size < header_size || entry->Size > *len - offset) break;
++            if (entry->Relationship == RelationCache && entry->Size >= line_end) entry->Cache.LineSize = 64;
++            offset += entry->Size;
++        }
++    }
+     if (status == STATUS_INFO_LENGTH_MISMATCH) status = STATUS_BUFFER_TOO_SMALL;
+     return set_ntstatus( status );
+ }

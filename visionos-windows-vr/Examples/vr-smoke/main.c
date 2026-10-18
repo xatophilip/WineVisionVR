@@ -46,6 +46,40 @@ static void logline(const char *format,...) {
     va_list args;va_start(args,format);vfprintf(logfile,format,args);va_end(args);
     fputc('\n',logfile);fflush(logfile);
 }
+/* Record the same legacy topology API queried by Tilt Brush's USD initializer.
+ * This is diagnostic only: a failed query must not hide the scene test result. */
+static void logCacheTopology(void) {
+    DWORD size=0;
+    SetLastError(ERROR_SUCCESS);
+    BOOL queried=GetLogicalProcessorInformation(NULL,&size);
+    DWORD error=GetLastError();
+    if(queried||error!=ERROR_INSUFFICIENT_BUFFER||!size||size>1024*1024){
+        logline("cache-topology query failed pointerBits=%u success=%d error=%lu bytes=%lu",
+                (unsigned)(8*sizeof(void*)),queried!=0,(unsigned long)error,(unsigned long)size);
+        return;
+    }
+    DWORD capacity=size;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION *records=malloc(capacity);
+    if(!records){logline("cache-topology allocation failed bytes=%lu",(unsigned long)capacity);return;}
+    queried=GetLogicalProcessorInformation(records,&size);
+    error=GetLastError();
+    if(!queried||size>capacity||size%sizeof(*records)){
+        logline("cache-topology read failed success=%d error=%lu bytes=%lu capacity=%lu",
+                queried!=0,(unsigned long)error,(unsigned long)size,(unsigned long)capacity);
+        free(records);return;
+    }
+    unsigned cacheCount=0;
+    for(DWORD i=0;i<size/sizeof(*records);i++){
+        if(records[i].Relationship!=RelationCache)continue;
+        cacheCount++;
+        logline("cache-topology pointerBits=%u level=%u type=%u lineBytes=%u sizeBytes=%lu",
+                (unsigned)(8*sizeof(void*)),(unsigned)records[i].Cache.Level,
+                (unsigned)records[i].Cache.Type,(unsigned)records[i].Cache.LineSize,
+                (unsigned long)records[i].Cache.Size);
+    }
+    logline("cache-topology records=%lu caches=%u",(unsigned long)(size/sizeof(*records)),cacheCount);
+    free(records);
+}
 static int fail(const char *operation,long code) {
     char message[256];snprintf(message,sizeof(message),"%s failed: 0x%08lx",operation,(unsigned long)code);
     logline("ERROR %s",message);OutputDebugStringA(message);return 1;
@@ -161,6 +195,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR arguments,int s
     ID3DBlob *vsCode=NULL,*psCode=NULL,*errors=NULL;
     logfile=fopen("C:\\vr-smoke.log","w");
     logline("WineVision owned VR smoke v1; mode=%s; pointerBits=%u; approximate IPD=0.064m",inverted?"inverted-stereo":"two-textures",(unsigned)(8*sizeof(void*)));
+    logCacheTopology();
     if(wcsstr(arguments,L"--cpu-self-test")){
         volatile uint32_t seed=0x12345678u;uint32_t value=seed;
         for(unsigned i=0;i<10000;i++)value=value*1664525u+1013904223u;
