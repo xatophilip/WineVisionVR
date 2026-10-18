@@ -37,6 +37,22 @@ python3 windows-runtime-plugin/Tests/test_native_child_bootstrap.py \
 
 The test is also registered in `test_local.py`. A source-only overlay reports explicit skips for unavailable PE fixtures.
 
-Both complete changed native translation units and the ARM64 ntdll PE compiled with the pinned XROS 27.0 SDK/LLVM-MinGW in a private APFS clone. An initial Darwin-wide-literal compilation error was corrected with the existing explicit 16-bit WCHAR-array pattern. This compile-only check inherited unchanged archive members and did not produce deployment provenance.
+The initial private APFS-clone check compiled both complete changed native translation units and the ARM64 ntdll PE with the pinned XROS 27.0 SDK/LLVM-MinGW. Its Darwin-wide-literal error was corrected with the existing explicit 16-bit WCHAR-array pattern. That early check inherited unchanged archive members and did not produce deployment provenance.
 
-The corrected runtime has not yet passed the headset mixed control. Fresh-package direct and mixed controls, including the handled exception and continuation, remain required. This change establishes no game compatibility or rendering success. Existing broader pseudo-process globals and concurrent child limits remain outside this fix.
+A complete normal fresh r6 build now follows that check. Its app and runtime source are both commit `9c5e214a86069a8758d398c16a985ca40c911354`: fresh baseline and modern profiles, native/guest compilation, source AIR writer, normal WMIC staging and signed main-app validation all passed. The final audit binds 19 native archives, 995 source guest payloads and 1,118 packaged files to the normal source/native/guest/modern receipts, without an inherited-runtime or resource-overlay receipt. The app UUID is `7EF17041-EA47-3BD4-B678-BB3A860F6D7C`; the runtime plugin UUID is `3350D264-EBA8-3598-8DE2-57E8902DEF87`. The 0016 and retained 0015 production-method sanitizer contracts also passed against the freshly built PE resources.
+
+All six exact packaged Windows-PE controls passed under the existing verified local Mac Wine/Rosetta host, using new isolated prefixes from its validated template:
+
+- GDI x64 and i386: fresh complete results with `SendInput`, edit, button, save, load and UTF-8 round-trip assertions all one, plus accepted input events.
+- CPU x64 and i386: expected arithmetic/event results and exit zero.
+- Direct i386 and x64-parent-to-i386-child SEH: fresh before/final markers, one callback and vectored handler, `contextFlags=65599` (`0x1003f`), valid i386 context/stack/exception, continuation after the raise, and exit zero.
+
+The execution receipts bind all seven newly packaged executable hashes to the signed 1,118-file app ledger; signed app bytes remained unchanged before and after execution. No old fixture payload was substituted. These are Mac-host controls of the packaged Windows PEs, not execution of the r6 visionOS/FEX/ARM64EC engine or a fresh Wine-prefix initialization test.
+
+Local evidence remains outside the repository:
+
+- `/Volumes/XRDev/build/WineVisionVR/child-loader-oct18-r6/verified-app-complete.json`, `artifact-handoff.json`, and `validation/result.json` record signing, source/runtime identity and normal build/package provenance.
+- The same r6 directory's `validation/native-child-bootstrap-fresh-runtime/native-child-bnbmlhro/contract-receipt.json` records the actual-source/real-PE 0016 checks.
+- `/Volumes/XRDev/build/WineVisionVR/final-r6-local-controls-oct18/final-six-local-result.json` records all six executions; `final-audit-link.json` binds them to the complete artifact receipt and app-file ledger.
+
+The r6 app is installed, but at this verification update the automatic headset runner is waiting for the locked headset to be unlocked. Fresh r6 headset direct and mixed SEH results, including handled exception and continuation, remain pending; game compatibility and rendering results also remain pending. Existing broader pseudo-process globals and concurrent child limits remain outside this fix.
