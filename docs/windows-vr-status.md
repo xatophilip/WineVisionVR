@@ -40,6 +40,44 @@ plus the independently reviewed cube evidence are retained under
 `/Volumes/XRDev/build/WineVisionVR/headset-r13-oct18`. Existing Steam login and
 downloaded games are retained.
 
+## Further r13 headset tests (2026-10-18)
+
+After another unlock, the i386 cube (native PID 1072) completes 399 stereo
+frames, with 400 guest GPU completions and no GPU failure counter. Its actual
+API log reports 32-bit pointers and 64-byte cache lines. The process later
+disappears during a background/resume transition. The capture contains a
+host-thread SIGABRT; no matching OS crash report or abort caller is available.
+This is an incomplete run, not a sustained 32-bit/resume pass.
+
+Audioshield (PID 1076) reaches a Unity crash dialog. Its fresh Unity error log
+identifies an access violation at kernel32 `_InterlockedExchange` with the same
+unaligned guest address `03340207`. Unlike the old repeated-fault host
+termination, this run reaches guest exception reconstruction and a real Unity
+error dialog. The writable-alias initialization handoff for the separate WOW64
+translator is being investigated; the installed build is not claimed fixed.
+
+CyberThreat's actual PID 1080 child command includes `-screen-quality Fastest`.
+The captured footprint peaks near 7920 MiB, then falls to 7424–7561 MiB;
+Unity progresses beyond the earlier capture to asset unloading and further
+initialization. It still submits no VR frames, and the process disappears
+before the explicit stop request. No matching termination report establishes
+the cause. The single run does not isolate the quality option's effect.
+
+Tilt Brush (PID 1119) reaches `FirstRunIntro` then `Standard`, completing 1425
+stereo frames in the independently reviewed capture. Recent transfer samples
+are approximately 40–41 guest updates/s, with a 90 Hz display and zero GPU
+failures. Its initial 327 dropped frames do not increase during later captured
+windows. Both controller roles remain disconnected/untracked; painting and
+physical visual acceptance are not confirmed in this run.
+
+The first attempted Lab launch reused Tilt Brush's surviving PID 1119 and is
+excluded as a Lab result. A successful SIGTERM receipt only means a signal was
+sent. The test loop now checks process disappearance and force-stops the owned
+test process when necessary before launching another title. The fresh Lab
+PID 1156 creates its initial 3840×1792 swapchain; later file transfers time out,
+so no later-stage or full compatibility result is asserted. All successful and
+failed receipts remain under `headset-r13-oct18` on the external build volume.
+
 ## Optional CyberThreat low-memory diagnostic (2026-10-18)
 
 The actual game's Unity 5.6.3f1 QualitySettings data contains a `Fastest`
