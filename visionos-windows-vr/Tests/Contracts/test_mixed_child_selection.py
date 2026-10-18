@@ -88,8 +88,11 @@ let note = mixed.appendingPathComponent("unrelated-note.txt")
 try Data("keep".utf8).write(to: note)
 let oldMarker = mixed.appendingPathComponent("mixed-child-result.json")
 try Data("stale pass".utf8).write(to: oldMarker)
+let beforeMarker = mixed.appendingPathComponent("mixed-child-result.json.before-seh.json")
+try Data("stale before".utf8).write(to: beforeMarker)
 try probe.selectMixedArchitectureChildTest()
 try check(!Foundation.FileManager.default.fileExists(atPath: oldMarker.path), "A prior mixed pass must be removed")
+try check(!Foundation.FileManager.default.fileExists(atPath: beforeMarker.path), "A prior mixed before marker must be removed")
 try check(Data(contentsOf: note) == Data("keep".utf8), "Fixture selection must preserve unrelated owned files")
 try probe.selectMixedArchitectureChildTest(directControl: true)
 let direct = probe.gameDirectory!
@@ -101,8 +104,11 @@ try check(probe.launchArgumentsText == "[]" && probe.launchError == nil && probe
           "Fixture selection clears previous launch state")
 let directMarker = direct.appendingPathComponent("direct-child-result.json")
 try Data("stale".utf8).write(to: directMarker)
+let directBeforeMarker = direct.appendingPathComponent("direct-child-result.json.before-seh.json")
+try Data("stale before".utf8).write(to: directBeforeMarker)
 try probe.selectMixedArchitectureChildTest(directControl: true)
 try check(!Foundation.FileManager.default.fileExists(atPath: directMarker.path), "A prior direct pass must be removed")
+try check(!Foundation.FileManager.default.fileExists(atPath: directBeforeMarker.path), "A prior direct before marker must be removed")
 let releases = probe.releases
 probe.canChangeSelection = false
 try probe.selectMixedArchitectureChildTest()

@@ -994,10 +994,13 @@ final class LauncherModel {
             try Data(contentsOf: source.appendingPathComponent(name)).write(to: executable, options: .atomic)
         }
         // Only an owned fixture's marker is removed; a failed startup cannot reuse a previous pass.
-        let marker = directory.appendingPathComponent(directControl ? "direct-child-result.json" : "mixed-child-result.json")
-        let markerValues = try? marker.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
-        guard markerValues?.isSymbolicLink != true, markerValues?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
-        if markerValues?.isRegularFile == true { try fm.removeItem(at: marker) }
+        let markerName = directControl ? "direct-child-result.json" : "mixed-child-result.json"
+        for name in [markerName, markerName + ".before-seh.json"] {
+            let marker = directory.appendingPathComponent(name)
+            let values = try? marker.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+            guard values?.isSymbolicLink != true, values?.isRegularFile != false else { throw ImportFailure.folderAccessDenied }
+            if values?.isRegularFile == true { try fm.removeItem(at: marker) }
+        }
         releaseGameDirectoryAccess()
         manifest = demo
         presentationModeDraft = .desktop
