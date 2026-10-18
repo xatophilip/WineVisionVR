@@ -1,5 +1,78 @@
 # Windows VR implementation status
 
+## Fork checkpoint (2026-10-18)
+
+The dated sections below preserve the earlier development record. For this
+fork's current run/rebuild instructions, use the [reproducibility guide](windows-vr-reproducibility.md)
+and [fork changes](windows-vr-fork-changes.md). Windlands, Job Simulator and
+Space Pirate Trainer have user-confirmed gameplay in earlier builds; this does
+not establish that every later package passes those games.
+
+The combined main app retains the existing Steam identity and supports the
+experimental modern i386 and x64 routes. The r6 headset controls passed direct
+i386 and x64-parent-to-i386-child exception handling and continuation; see the
+[native child bootstrap evidence](windows-vr-native-child-bootstrap.md).
+
+A normal fresh signed r7 build now includes the genuine missing ARM64EC XInput
+1.3, 1.4 and 9.1.0 modules, with source/runtime commit
+`f60825a3f97854b2a2de82d99fc6cd3e1b53c05d`. Its native/guest/graphics receipts,
+19 native archives, 998 source guest payloads and 1,121 packaged files passed
+validation without resource overlays or compiled-runtime reuse. Signing and
+actual-source/real-PE packaging and sanitizer contracts passed. The app UUID is
+`EB1AD993-6EE1-3FCC-900E-FC2727A2EFE3`; the runtime plugin UUID is
+`1BF91AF5-E9CC-3D61-A265-B6583A082A5A`.
+
+All six exact packaged x64/i386 local GDI, CPU and direct/mixed-child controls
+also passed, with the signed app unchanged; these are Mac Wine controls, not
+headset runtime execution. The packaging unit suite passed all 68 tests.
+
+The headset battery ran out before Tomb Raider could be tested. The r7 package
+has not been installed or executed on Vision Pro. The new XInput packaging
+resolves missing-module availability, not a verified fix for Tilt Brush,
+CyberThreat or Audioshield gameplay. See [XInput verification](windows-vr-xinput-packaging.md)
+and [the DOSBox status](windows-desktop-dosbox.md).
+
+## Startup recovery and VR dependency checks (2026-10-18)
+
+A subsequent Swift-only fix addresses a reproduced compositor startup failure:
+two failed ARKit run attempts previously returned without starting tracking, but
+the renderer still latched tracking as started and never retried. Startup now
+reports success explicitly, retries failures with an interruptible one-second
+wait, and checks cancellation and layer state after asynchronous setup. It
+creates fresh world-tracking providers for startup and world-only fallback;
+[Apple's ARKit run contract](https://developer.apple.com/documentation/arkit/arkitsession/run(_:))
+does not permit restarting stopped providers. Failed/aborted setup stops the
+session and clears controller state.
+
+Seventeen controlled cases compile and execute the actual production methods
+with ARKit/layer boundaries substituted. They cover failed startup recovery,
+world-only fallback, pause/resume, delayed provider-state visibility, and
+cancellation/pause/invalidation at setup/fallback suspension points. The exact
+prior source reproduces the failed-startup latch. Independent review, pinned
+visionOS API typechecking and source parsing passed. This does not execute an
+ARKit service or prove total authorization/pause timing or global renderer-task
+exclusivity. A new signed app build and physical acceptance remain required.
+External evidence is under `cold-start-review-oct18/tracking-final/` beside the
+other build records.
+
+A read-only audit against the exact r7 package resolved all 1,547 imports from
+the available genuine Windlands EXE/native plugins and all 511 imports from
+Fantastic Contraption's UnityPlayer, including ordinal/recursive forwarders and
+the real 672-contract API-set namespace. No additional mandatory DLL fix was
+established. This does not cover every native plugin of every installed game.
+Shared SDL3/Steam video-component warnings also occur in known-working game
+logs; optional Oculus fallback warnings coexist with explicit OpenVR rendering.
+Those messages alone do not establish a game-startup cause. See external
+`vr-compat-audit-oct18/ranked-findings.json` for the checked inputs and limits.
+
+The next headset acceptance starts with the owned direct/mixed architecture
+controls and stereo VR smoke scenes, then Windlands and Job Simulator or Space
+Pirate Trainer, checking visible gameplay, both tracked controllers, new guest
+frames and GPU completion. Retest Audioshield, Tilt Brush, CyberThreat and
+Fantastic Contraption individually with fresh logs. Static imports or submitted
+frames alone do not establish visible gameplay. LocalDevVPN and StikDebug must
+be ready after the headset restarts; start through WineVision's Play handoff.
+
 ## Launch-free review (2026-10-12)
 
 The implementation is an experimental contribution seeking further development

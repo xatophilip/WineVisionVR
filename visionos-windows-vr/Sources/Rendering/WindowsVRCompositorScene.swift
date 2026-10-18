@@ -143,7 +143,7 @@ private final class WindowsVRCompositorRenderer {
     private let layerRenderer: LayerRenderer
     private let metalCommandQueue: MTLCommandQueue?
     private let arSession = ARKitSession()
-    private let worldTracking = WorldTrackingProvider()
+    private var worldTracking = WorldTrackingProvider()
     private let controllerTracking = WindowsVRControllerProvider()
     private let compositorClock = LayerRenderer.Clock()
     private let spatialLibrary: MTLLibrary?
@@ -300,8 +300,16 @@ private final class WindowsVRCompositorRenderer {
             case .running:
                 if !trackingStarted {
                     Self.log.notice("Layer renderer running; starting tracking")
-                    await startTracking()
-                    trackingStarted = true
+                    trackingStarted = await startTracking()
+                    guard !Task.isCancelled else { return }
+                    guard layerRenderer.state == .running else { continue }
+                    if !trackingStarted {
+                        // Retry a transient startup failure without spinning or
+                        // latching an inactive session as started. Cancellation
+                        // interrupts this wait; pause/invalidation is rechecked.
+                        try? await Task.sleep(for: .seconds(1))
+                        continue
+                    }
                 }
                 // This task stays inside its render loop between suspension
                 // points. Retire temporary Objective-C/Metal objects per frame.
@@ -316,13 +324,28 @@ private final class WindowsVRCompositorRenderer {
         }
     }
 
-    private func startTracking() async {
+    private func startTracking() async -> Bool {
+        guard !Task.isCancelled, layerRenderer.state == .running else { return false }
         let authorization = await arSession.requestAuthorization(for: [.worldSensing, .accessoryTracking])
+        guard !Task.isCancelled, layerRenderer.state == .running else {
+            arSession.stop()
+            controllerTracking.reset()
+            return false
+        }
+        // ARKit stops associated providers when run throws or the session stops.
+        // A stopped provider cannot be run again, including on pause/resume.
+        // Replace unconditionally: provider state updates can lag stop().
+        worldTracking = WorldTrackingProvider()
         Self.log.notice("ARKit authorization: worldSensing=\(String(describing: authorization[.worldSensing])) accessoryTracking=\(String(describing: authorization[.accessoryTracking]))")
         LaunchLogFile.append("tracking", "ARKit authorization world=\(String(describing: authorization[.worldSensing])) accessory=\(String(describing: authorization[.accessoryTracking]))")
         let controllerProviders = await controllerTracking.configure(
             authorized: authorization[.accessoryTracking] == .allowed
         )
+        guard !Task.isCancelled, layerRenderer.state == .running else {
+            arSession.stop()
+            controllerTracking.reset()
+            return false
+        }
         var providers: [any DataProvider] = [worldTracking]
         providers.append(contentsOf: controllerProviders)
         LaunchLogFile.append("tracking", "ARKit run requested providers=\(providers.count)")
@@ -330,21 +353,33 @@ private final class WindowsVRCompositorRenderer {
             try await arSession.run(providers)
         } catch {
             LaunchLogFile.append("tracking", "ARKit run failed; fallback to world only: \(String(String(describing: error).prefix(512)))")
-            // A controller provider must never take head tracking down with it:
-            // without a device anchor every drawable is dropped by the compositor.
+            // A controller provider must never take head tracking down with it.
+            // Failed runs stop every provider, so fallback needs a fresh one.
             Self.log.error("ARKitSession.run with \(providers.count) providers failed: \(String(describing: error)); retrying with world tracking only")
+            arSession.stop()
             controllerTracking.reset()
+            guard !Task.isCancelled, layerRenderer.state == .running else { return false }
+            worldTracking = WorldTrackingProvider()
             do {
                 try await arSession.run([worldTracking])
             } catch {
                 LaunchLogFile.append("tracking", "ARKit world-only run failed: \(String(String(describing: error).prefix(512)))")
                 Self.log.error("ARKitSession.run (world tracking only) failed: \(String(describing: error))")
+                arSession.stop()
+                controllerTracking.reset()
+                wvr_compositor_pause_v1()
                 publishUnavailablePose()
-                return
+                return false
             }
+        }
+        guard !Task.isCancelled, layerRenderer.state == .running else {
+            arSession.stop()
+            controllerTracking.reset()
+            return false
         }
         LaunchLogFile.append("tracking", "ARKit run returned worldState=\(worldTracking.state)")
         Self.log.notice("ARKit session running; worldTracking.state=\(String(describing: self.worldTracking.state))")
+        return true
     }
 
     private func renderNextFrame() {

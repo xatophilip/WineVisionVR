@@ -67,3 +67,50 @@ receipts are required for the next package under the current model. The r6
 artifact and its receipts remain unchanged; the private three-target build does
 not relabel them. Game loading, VR rendering and actual controller behavior
 remain unverified by these checks.
+
+## Normal fresh signed r7 package
+
+The subsequent full baseline/modern pipeline completed on 18 October 2026 from
+app/runtime source `f60825a3f97854b2a2de82d99fc6cd3e1b53c05d`. It rebuilt native,
+guest and graphics outputs normally, with no compiled-runtime reuse or resource
+overlay. All three new genuine ARM64EC DLL hashes agree between the normal
+source guest receipt, packaged Runtime farm and production-method contract.
+The complete audit validates 19 native archives, 998 source guest payloads and
+1,121 packaged files, plus the original main-app signing identity/profile and
+deep strict signature.
+
+The real r7 resources passed the 105-PE XInput closure, dynamic-fallback, required
+exports, production staging/copy/ledger, each-missing-DLL negative checks and
+production-method ASan/UBSan contract. Retained native-child, native-import and
+WMIC production contracts also passed with the fresh outputs. These are
+compile/package and host contract results, not execution of ARM64EC XInput on
+the headset or proof that a game now loads.
+
+The signed app UUID is `EB1AD993-6EE1-3FCC-900E-FC2727A2EFE3`; its runtime plugin
+UUID is `1BF91AF5-E9CC-3D61-A265-B6583A082A5A`. External receipts are under
+`/Volumes/XRDev/build/WineVisionVR/xinput-oct18-r7`: `build-inputs.json`,
+`verified-app-complete.json`, `artifact-handoff.json`, `validation/result.json`,
+`validation/app-files.json` and `validation/xinput-production-packaging/contract-receipt.json`.
+The completed rich app audit SHA-256 is
+`99f242d933dc49b669664fa1d99547c8a5fb4aa6c057bfbaea17d528a1830eed`.
+The battery-depleted headset was not used for the r7 build/audit; installation
+and device/game acceptance remain pending.
+
+All six exact r7 packaged Windows-PE controls also passed under the verified
+local Mac Wine/Rosetta host in new isolated template prefixes: x64/i386 GDI
+(input/edit/button/save/load/UTF-8), x64/i386 CPU arithmetic/event, and direct
+i386/mixed x64-parent SEH with continuation and exit zero. Before and after
+execution, the runner verified the rich app audit, input/source archive hashes,
+all 1,121 app files, seven exact packaged PE hashes, executable/plugin UUIDs and
+hashes, profile and deep strict signature. No packaged bytes changed. These
+checks execute Windows fixtures on the Mac; they do not execute the r7
+visionOS/FEX/ARM64EC runtime or measure headset FPS.
+
+The first local run failed the i386 fixture's exact-one-click assertion after
+an additional counted click; the trace also records the accepted injected pair.
+That failed result remains preserved. An unchanged fresh-prefix retry passed all
+six controls. Its results, exact app binding and linked original failure are in
+`/Volumes/XRDev/build/WineVisionVR/final-r7-local-controls-oct18-retry1/`:
+`final-six-local-result.json`, `signed-app-fixture-binding.json` and
+`final-audit-link.json`. The separate packaging unit suite passed all 68 tests;
+its log and result are in `host-final-oct18/` beside the other build evidence.

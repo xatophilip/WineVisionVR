@@ -11,6 +11,9 @@ parser.add_argument('--build', required=True, type=Path)
 args = parser.parse_args()
 args.build.mkdir(parents=True, exist_ok=True)
 source = (root / 'visionos-windows-vr/Sources/LauncherModel.swift').read_text()
+compatibility = 'nonisolated static func steamCompatibilityEnvironment(' + source.split(
+    'nonisolated static func steamCompatibilityEnvironment(', 1)[1].split(
+    "    /// Steam's 64-bit launch host", 1)[0]
 methods = 'nonisolated static func steamGuestArchitecture(' + source.split(
     'nonisolated static func steamGuestArchitecture(', 1)[1].split('    func selectSteamGame(', 1)[0]
 restore = 'private func restoreSteamSelection(' + source.split(
@@ -120,6 +123,7 @@ class RestoredProbe {
     var selectedProfileID: String?
     static let steamLaunchOptionsKey = "options"
 ARCHBODY
+COMPATIBILITYBODY
 RESTOREBODY
 EFFECTIVEBODY
     func restoredManifest(_ saved: WindowsGameManifest) throws -> WindowsGameManifest {
@@ -130,7 +134,7 @@ EFFECTIVEBODY
 }
 func saved(_ architecture: WindowsGuestArchitecture?, id: String = "steam.shared") throws -> WindowsGameManifest {
     try WindowsGameManifest(id: id, title: "Fixture", executableRelativePath: "AVPPlaySteam/dockhost.exe",
-        backend: .windowsWineFEX, graphics: .direct3D11, launchArguments: [], guestArchitecture: architecture, schemaVersion: 1)
+        backend: .windowsWineFEX, graphics: .direct3D11, launchArguments: [], environment: ["KEEP": "yes"], guestArchitecture: architecture, schemaVersion: 1)
 }
 MadeiraDock.drive = base
 MadeiraDock.installedGames = [game]
@@ -146,6 +150,28 @@ try check(try restored.restoredManifest(old).guestArchitecture == .x86, "Actual 
 restored.selectedEntry = nil; restored.selectedProfileID = nil
 SteamLocalAppInfo.options = [SteamLaunchOption(executable: "game64.exe")]
 try check(try restored.restoredManifest(saved(.x86)).guestArchitecture == nil, "Restored x64 game clears a stale x86 field")
+// Execute the actual compatibility helper through the actual effectiveManifest
+// for both child architectures, retaining inherited variables and option scope.
+for executable in ["game32.exe", "game64.exe"] {
+    var windlands = game; windlands.id = 428370
+    MadeiraDock.installedGames = [windlands]
+    SteamLocalAppInfo.options = [SteamLaunchOption(executable: executable)]
+    let active = try restored.restoredManifest(saved(nil))
+    try check(active.guestArchitecture == (executable == "game32.exe" ? .x86 : nil),
+              "Compatibility setting must preserve actual child architecture")
+    try check(active.environment == ["KEEP": "yes", "OPENSSL_ia32cap": "0"],
+              "Restored Windlands must retain scoped compatibility and inherited environment")
+}
+var tomb = game; tomb.id = 224960
+MadeiraDock.installedGames = [tomb]
+SteamLocalAppInfo.options = [SteamLaunchOption(executable: "DOSBox.exe")]
+let dosbox = try restored.restoredManifest(saved(nil))
+try check(dosbox.guestArchitecture == .x86 && dosbox.environment == ["KEEP": "yes", "SDL_VIDEODRIVER": "windib"],
+          "Restored actual DOSBox child must receive scoped SDL environment")
+SteamLocalAppInfo.options = [SteamLaunchOption(executable: "game64.exe")]
+try check(try restored.restoredManifest(saved(nil)).environment == ["KEEP": "yes"],
+          "Native Tomb option must not receive DOSBox environment")
+MadeiraDock.installedGames = [game]
 // Restore must reconcile a removed launch option before architecture inspection.
 UserDefaults.standard.values["options"] = [String(game.id): 99]
 SteamLocalAppInfo.options = [SteamLaunchOption(executable: "game32.exe")]
@@ -178,10 +204,11 @@ for (index, relative) in x86Files.enumerated() {
 try FileManager.default.removeItem(at: resources.appendingPathComponent(x86Files[0]))
 try check(!Probe.bundledX86RuntimeAvailable(resources: resources, immersiveVR: true), "VR bridges cannot replace a missing x86 Wine farm")
 print("PASS: actual PE architecture, restored Steam/profile fields, option reconciliation, direct manifests and x86-only package guard")
-'''.replace('METHODS', methods).replace('PRODUCTIONMANIFEST', manifest).replace('ARCHBODY', methods).replace('RESTOREBODY', restore).replace('EFFECTIVEBODY', effective)
+'''.replace('METHODS', methods).replace('PRODUCTIONMANIFEST', manifest).replace('ARCHBODY', methods).replace('COMPATIBILITYBODY', compatibility).replace('RESTOREBODY', restore).replace('EFFECTIVEBODY', effective)
 unit = args.build / 'SteamArchitecture.swift'
 resolver = (root / 'visionos-windows-vr/Sources/Steam/SteamInstalledExecutable.swift').read_text()
-unit.write_text(resolver + probe)
+dosbox = (root / 'visionos-windows-vr/Sources/Steam/SteamDOSBoxCompatibility.swift').read_text()
+unit.write_text(resolver + dosbox + probe)
 binary = args.build / 'steam-architecture'
 subprocess.run(['xcrun', 'swiftc', str(unit), '-o', str(binary)], check=True)
 with tempfile.TemporaryDirectory(prefix='fixture-', dir=args.build) as fixture:
