@@ -263,3 +263,29 @@ is titled **32-bit input trace**. It uses the installed r3 runtime; no native
 runtime or app rebuild was needed. Temporary native `trace+win` output can be
 enabled for this diagnostic via the host app environment
 `MADEIRA_DEBUG_VERBOSE=1`; the bridge overrides direct WINEDEBUG values.
+
+
+## Parent-cache failure isolated by the automatic probe
+
+The app-only diagnostic UUID `D9C9C908-F2A8-341C-B54D-3FD6D9C8542F` retained
+the exact r3 native plugin and automatically ran the traced i386 fixture. Its
+root reported GA_PARENT equal to the desktop handle, GA_ROOT zero, and
+GA_ROOTOWNER equal to the real root; both child controls showed the same zero
+GA_ROOT despite valid immediate parents. The message-loop trace received only
+mouse-up; IsDialogMessage did not consume it and DispatchMessage delivered it.
+Thus the missing mouse-down is upstream of guest dialog filtering/dispatch.
+
+Patch `0014` changes list_window_parents to use its existing authoritative
+wineserver query when a local WND lookup fails, as it already does for windows
+from other processes. It queries the original HWND and preserves errors for
+invalid/stale handles, server failures and actual allocation failures. It does
+not substitute the active window. Sanitizer tests execute the production
+get_win_ptr, parent traversal and ancestor functions with mocked cache/server
+boundaries: the original code reproduces the observed valid-parent/zero-root
+relationship when the embedded desktop lacks a client WND, and the patched code
+recovers the correct root. The precise missing local entry was inferred from
+that reproduction, not directly logged on the headset.
+
+This patch requires a new source profile and full package build with the current
+receipt model. The r3 native runtime was not modified. Hardware confirmation is
+still required; the preceding activation-only fix was insufficient.

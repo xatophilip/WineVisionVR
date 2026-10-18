@@ -1,0 +1,15 @@
+--- a/wine/dlls/win32u/window.c
++++ b/wine/dlls/win32u/window.c
+@@ -775,7 +775,11 @@
+     current = hwnd;
+     for (;;)
+     {
+-        if (!(win = get_win_ptr( current ))) goto empty;
++        /* Embedded desktop windows can exist on the server without a local
++         * client WND. A local cache miss is not proof the chain is invalid:
++         * ask the server for the complete chain of the original window.
++         * Invalid/stale handles still produce an empty server result. */
++        if (!(win = get_win_ptr( current ))) break;
+         if (win == WND_OTHER_PROCESS) break;  /* need to do it the hard way */
+         if (win == WND_DESKTOP)
+         {

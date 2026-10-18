@@ -148,6 +148,9 @@ def main():
         run('child-gdi-publication', [python, 'windows-runtime-plugin/Tests/test_child_gdi_publication.py',
                                       '--runtime-source', runtime_source,
                                       '--build', build / 'child-gdi-publication'])
+        run('window-parent-cache', [python, 'windows-runtime-plugin/Tests/test_window_parent_cache.py',
+                                      '--runtime-source', runtime_source,
+                                      '--build', build / 'window-parent-cache'])
         run('mouse-activation', [python, 'windows-runtime-plugin/Tests/test_mouse_activation.py',
                                    '--runtime-source', runtime_source,
                                    '--build', build / 'mouse-activation'])
@@ -156,6 +159,7 @@ def main():
                                      '--output-dir', build / 'jit-pool-arbitration'])
     else:
         skip('child-gdi-publication', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+        skip('window-parent-cache', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('mouse-activation', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('jit-pool-arbitration', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
 
