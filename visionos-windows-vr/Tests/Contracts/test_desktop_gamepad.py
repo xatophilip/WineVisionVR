@@ -3,12 +3,36 @@
 
 GC snapshots, UIKit events and the native key sink are boundary mocks. No
 controller hardware, Windows executable, immersive space or device is used.
+Framework string constants come from an independent real-SDK Swift probe.
 """
-import argparse,ast,hashlib,json
+import argparse,ast,hashlib,json,os
 from pathlib import Path
 import subprocess
 ROOT=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--build',required=True,type=Path);a=p.parse_args();a.build.mkdir(parents=True,exist_ok=True)
+a.build=a.build.resolve()
+(a.build/'tmp').mkdir(exist_ok=True)
+env=dict(os.environ,TMPDIR=str(a.build/'tmp'),CLANG_MODULE_CACHE_PATH=str(a.build/'tmp/module-cache'),SWIFT_MODULECACHE_PATH=str(a.build/'tmp/swift-cache'))
+# Read framework constants independently before compiling the GC type mocks.
+# This probe reads strings only; it never enumerates or samples any hardware.
+constant_source=a.build/'sdk-constants.swift'
+constant_source.write_text('''import Foundation
+import GameController
+let values = ["GCInputButtonMenu": GCInputButtonMenu,
+              "GCInputButtonOptions": GCInputButtonOptions,
+              "GCInputButtonShare": GCInputButtonShare,
+              "GCProductCategorySpatialController": GCProductCategorySpatialController]
+let data = try JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+print(String(decoding: data, as: UTF8.self))
+''')
+constant_command=['xcrun','swiftc','-swift-version','6','-module-cache-path',str(a.build/'tmp/swift-cache'),str(constant_source),'-o',str(a.build/'sdk-constants')]
+subprocess.run(constant_command,check=True,env=env,timeout=60)
+constant_result=subprocess.run([str(a.build/'sdk-constants')],check=True,env=env,capture_output=True,text=True,timeout=10)
+constants=json.loads(constant_result.stdout)
+assert set(constants)=={'GCInputButtonMenu','GCInputButtonOptions','GCInputButtonShare','GCProductCategorySpatialController'}
+assert all(type(value) is str and value for value in constants.values())
+(a.build/'sdk-constants.json').write_text(json.dumps(constants,indent=2)+'\n')
+constant_declarations='\n'.join('let '+key+'='+json.dumps(value) for key,value in sorted(constants.items()))+'\n'
 view=(ROOT/'visionos-windows-vr/Sources/Desktop/WindowsDesktopView.swift').read_text()
 gamepad=(ROOT/'visionos-windows-vr/Sources/Desktop/WindowsDesktopGamepad.swift').read_text()
 keyboard=(ROOT/'windows-vr/Sources/WindowsVRCore/WindowsDesktopKeyboard.swift').read_text()
@@ -29,9 +53,7 @@ scope=body(launcher,'var supportsTombRaiderDesktopControls: Bool')
 assert 'input.capture()' in sampler and 'GCSpatialAccessory.spatialAccessories' in sampler and 'ObjectIdentifier($0)' in sampler
 assert 'import ARKit' not in gamepad and 'AccessoryTrackingProvider' not in gamepad
 assert '.task(id: gamepadActive)' in view and 'controls.releaseInput()' in view
-stubs=r'''
-let GCInputButtonMenu="Menu",GCInputButtonOptions="Options",GCInputButtonShare="Share"
-let GCProductCategorySpatialController="Spatial"
+stubs=constant_declarations+r'''
 protocol GCDevice:AnyObject {}
 struct Pressed { var isPressed:Bool }
 struct Button { var pressedInput:Pressed }
@@ -84,8 +106,24 @@ events=[];s.pressesBegan([control],with:nil);s.updateGamepadKeys([0xA2]);s.press
 check(events == [.key(0xA2,1)],"Physical release interrupted held gamepad control")
 s.updateGamepadKeys([]);check(events == [.key(0xA2,1),.key(0xA2,0)],"Gamepad final release missing")
 print("PASS: latest-state hold, device dedup, overlapping controllers and physical/gamepad source ownership")
-let all=WindowsDesktopGamepadMapping.keys(pressed:{ ["Button A","Button B","Left Shoulder","Options","Left Thumbstick Button"].contains($0) },axis:{_ in nil},stick:{_ in nil})
+let all=WindowsDesktopGamepadMapping.keys(pressed:{ ["Button A","Button B","Left Shoulder",GCInputButtonOptions,"Left Thumbstick Button"].contains($0) },axis:{_ in nil},stick:{_ in nil})
 check(all == [0xA4,0x20,0xA0,0x1B,0x0D],"Button aliases or Windows keys changed")
+for name in [GCInputButtonMenu,GCInputButtonOptions,GCInputButtonShare] {
+ check(WindowsDesktopGamepadMapping.keys(pressed:{$0==name},axis:{_ in nil},stick:{_ in nil}) == [0x1B],"Actual SDK menu alias failed")
+}
+if ![GCInputButtonMenu,GCInputButtonOptions,GCInputButtonShare].contains("Options") {
+ check(WindowsDesktopGamepadMapping.keys(pressed:{$0=="Options"},axis:{_ in nil},stick:{_ in nil}).isEmpty,"Invented Options alias mapped despite actual SDK constants")
+}
+print("PASS: independently probed SDK menu/share/category constants and arbitrary Options alias rejection")
+// Actual saved r6 controller alias groups (launcher.previous-1.txt:2225):
+// Button B, Button Menu, Grip, Trigger, Button A, Thumbstick/Thumbstick Button.
+// This tests a boundary snapshot with recorded names, not hardware sampling.
+check(GCInputButtonMenu == "Button Menu","Recorded menu alias differs from SDK constant")
+let recorded=WindowsDesktopGamepadMapping.keys(
+ pressed:{ ["Button B","Button Menu","Grip","Trigger","Button A","Thumbstick Button"].contains($0) },
+ axis:{_ in nil},stick:{$0=="Thumbstick" ? (0.7,-0.8):nil})
+check(recorded == [0x20,0x1B,0xA0,0xA2,0xA4,0x0D,0x27,0x28],"Recorded Sense alias snapshot failed")
+print("PASS: recorded Sense aliases map expected Windows keys through the production mapper; boundary snapshot only")
 let diagonal=WindowsDesktopGamepadMapping.keys(pressed:{_ in false},axis:{_ in nil},stick:{ $0=="Right Thumbstick" ? (0.5,-0.9):nil })
 check(diagonal == [0x27,0x28],"Either stick must provide arrows including diagonals")
 let axes=WindowsDesktopGamepadMapping.keys(pressed:{_ in false},axis:{ ["Left Thumbstick X Axis":Float(-0.8),"Left Thumbstick Y Axis":Float(0.7)][$0] },stick:{_ in nil})
@@ -143,7 +181,7 @@ check_function='func check(_ condition:@autoclosure ()->Bool,_ message:String) {
 tests=tests.replace(check_function,'')
 unit=a.build/'main.swift' 
 unit.write_text(prefix+stubs+gamepad.replace('import GameController','')+'\nenum Sampler {\n'+sampler+'\n}\n'+keyboard+'\nfinal class WindowsDesktopSurface:UIView {\n'+fields+'\ninit(_ controls:WindowsDesktopControls){self.controls=controls;super.init()}\n'+methods+'\n}\nfinal class Scope {\nvar manifest:Manifest?=Manifest(id:"steam.shared",environment:["SDL_VIDEODRIVER":"windib"])\nvar selectedSteamAppID:Int?=224960\nvar presentationModeDraft=WindowsPresentationMode.desktop\n'+scope+'\n}\n'+check_function+'\n@main struct Driver { @MainActor static func main() async {\n'+tests+'\n} }\n')
-command=['xcrun','swiftc','-parse-as-library',str(unit),'-o',str(a.build/'probe')]
-subprocess.run(command,check=True);result=subprocess.run([str(a.build/'probe')],check=True,capture_output=True,text=True)
+command=['xcrun','swiftc','-module-cache-path',str(a.build/'tmp/swift-cache'),'-parse-as-library',str(unit),'-o',str(a.build/'probe')]
+subprocess.run(command,check=True,env=env,timeout=60);result=subprocess.run([str(a.build/'probe')],check=True,env=env,capture_output=True,text=True,timeout=20)
 print(result.stdout,end='')
-(a.build/'result.json').write_text(json.dumps({'passed':True,'scope':'Actual Swift mapper/sampler, session scope and desktop surface key methods; GC/UIKit/native sink boundary mocks. No hardware, Wine or device execution.','gamepadSha256':hashlib.sha256(gamepad.encode()).hexdigest(),'surfaceSha256':hashlib.sha256(view.encode()).hexdigest(),'command':command,'result':result.stdout},indent=2)+'\n')
+(a.build/'result.json').write_text(json.dumps({'passed':True,'scope':'Actual Swift mapper/sampler, session scope and desktop surface key methods; GC/UIKit/native sink boundary mocks. No hardware, Wine or device execution.','sdkConstants':constants,'constantProbeSha256':hashlib.sha256(constant_source.read_bytes()).hexdigest(),'constantProbeCommand':constant_command,'gamepadSha256':hashlib.sha256(gamepad.encode()).hexdigest(),'surfaceSha256':hashlib.sha256(view.encode()).hexdigest(),'command':command,'result':result.stdout},indent=2)+'\n')
