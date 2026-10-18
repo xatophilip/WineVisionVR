@@ -63,8 +63,9 @@ made the runtime busy; the subsequent uninterrupted repair completed.
 
 The following Tomb Raider launch request failed in visionOS's app-opening
 service (CoreDevice 10002 / FBSOpenApplicationService error 5), after which
-Xcode reported the headset unavailable. This is not evidence that DOSBox or
-Tomb Raider executed or crashed on the headset. Preserve that distinction when
+Xcode reported the headset unavailable. The user subsequently confirmed that
+the headset battery had run out and it was restarting. This is not evidence
+that DOSBox or Tomb Raider executed or crashed on the headset. Preserve that distinction when
 reporting compatibility. The local build evidence directory contains
 tomb-repair-retry-monitor/result.json, tomb-repair-success/ and
 tomb-dosbox-launch.json; raw device evidence is not committed.

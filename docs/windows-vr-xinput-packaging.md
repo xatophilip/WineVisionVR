@@ -39,6 +39,9 @@ python3 windows-runtime-plugin/Tests/test_wine_xinput_packaging.py \
   --build /absolute/path/to/new-external-contract-output
 ```
 
+The check is also registered in test_local.py when the prepared runtime has
+all three genuine ARM64EC PE fixtures; source-only runs report an explicit skip.
+
 On 18 October 2026, the three real ARM64EC targets compiled with the r6 pinned
 LLVM-MinGW toolchain and normal `build/wine-pe/build-modules.sh`, using two jobs
 in a private APFS clone. The focused contract passed with a 105-PE closure.

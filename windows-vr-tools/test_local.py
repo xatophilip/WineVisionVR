@@ -196,6 +196,15 @@ def main():
     else:
         skip('wine-wmic-provider', 'Requires prepared pinned Wine WMIC and wbemprox source')
 
+    xinput_modules = ("xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll")
+    if runtime_source and (runtime_source / 'wine/dlls/xinput1_3/main.c').is_file() and all(
+            (runtime_source / 'app/Madeira/arm64ec-windows' / name).is_file() for name in xinput_modules):
+        run('wine-xinput-packaging', [python, 'windows-runtime-plugin/Tests/test_wine_xinput_packaging.py',
+                                     '--runtime-source', runtime_source,
+                                     '--build', build / 'wine-xinput-packaging'])
+    else:
+        skip('wine-xinput-packaging', 'Requires prepared Wine source and genuine ARM64EC XInput PE fixtures')
+
     modern_source = args.dxmt_modern_wow64_source
     if modern_source is None and env.get('AVPPLAY_D3D12_PROFILE_SOURCE'):
         modern_source = Path(env['AVPPLAY_D3D12_PROFILE_SOURCE']) / 'dxmt'
