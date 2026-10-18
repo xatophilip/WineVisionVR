@@ -14,6 +14,13 @@ struct SteamLibraryEntry: Identifiable, Sendable {
     var id: Int { game.id }
 }
 
+/// Numeric diagnostic outcomes deliberately exclude account names, paths and errors.
+enum SteamDiagnosticRepairStatus: Int, Sendable {
+    case completed = 0, disabled, invalidAppID, signedOut, notOwned, notInstalled
+    case runtimeBusy, alreadyRequested, accountChanged, enqueueRefused, failed
+    case cancelled, timedOut, interrupted, started, metadataUnavailable
+}
+
 @MainActor
 final class SteamLibraryModel: ObservableObject {
     static let shared = SteamLibraryModel()
@@ -63,6 +70,13 @@ final class SteamLibraryModel: ObservableObject {
     private var reloadLibraryWhenIdle = false
     private var queueAccount: String?
     private var repairDownloads: Set<Int> = []
+    private struct DiagnosticRepairRequest {
+        let id: UUID
+        let generation: Int
+        var downloadToken: UUID?
+        var outcome: SteamDiagnosticRepairStatus?
+    }
+    private var diagnosticRepairRequests: [Int: DiagnosticRepairRequest] = [:]
     private var applicationIsActive = true
     private var backgroundRecoveryCandidates: Set<Int> = []
     private var waitingForForeground: Set<Int> = []
@@ -220,6 +234,7 @@ final class SteamLibraryModel: ObservableObject {
         pausedDownloads = []
         queuedDownloads = []
         repairDownloads = []
+        diagnosticRepairRequests = [:]
         backgroundRecoveryCandidates = []
         waitingForForeground = []
         endDownloadBackgroundExecution()
@@ -281,6 +296,106 @@ final class SteamLibraryModel: ObservableObject {
         startNextDownload()
     }
 
+    /// Explicit diagnostics only: normal owned-game repair through the existing
+    /// FIFO and DepotDownloader. Completion means this request's installer really
+    /// returned, never merely that an already-installed ID exists in the library.
+    func diagnosticRepairInstalledGame(appID: Int, diagnosticsEnabled: Bool = false,
+                                       timeout: TimeInterval = 1_800,
+                                       log: (String) -> Void = { _ in }) async -> SteamDiagnosticRepairStatus {
+        func report(_ status: SteamDiagnosticRepairStatus) -> SteamDiagnosticRepairStatus {
+            log("appID=\(appID) status=\(status.rawValue)")
+            return status
+        }
+        guard diagnosticsEnabled else { return report(.disabled) }
+        guard appID > 0, appID <= Int(UInt32.max), timeout.isFinite, timeout > 0 else {
+            return report(.invalidAppID)
+        }
+        guard signedIn, let account = SteamSignIn.accountName else { return report(.signedOut) }
+        let generation = accountGeneration
+        let deadline = ProcessInfo.processInfo.systemUptime + min(timeout, 1_800)
+        // Include first metadata loading in the same deadline. Do not cancel a
+        // normal sheet refresh on diagnostic timeout; no repair is enqueued yet.
+        var initialRefreshFinished = true
+        if queueAccount == nil && !isLoadingLibrary {
+            initialRefreshFinished = false
+            Task { @MainActor in
+                await self.refreshLibrary()
+                initialRefreshFinished = true
+            }
+        }
+        while isLoadingLibrary || !initialRefreshFinished {
+            if Task.isCancelled { return report(.cancelled) }
+            guard generation == accountGeneration, signedIn,
+                  SteamSignIn.accountName == account else { return report(.accountChanged) }
+            guard !runtimeBusy, !sessionReservedForLaunch, !isPreparingValveClient else { return report(.runtimeBusy) }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return report(.timedOut) }
+            do { try await Task.sleep(nanoseconds: 100_000_000) }
+            catch { return report(.cancelled) }
+        }
+        guard generation == accountGeneration, signedIn,
+              SteamSignIn.accountName == account else { return report(.accountChanged) }
+        guard queueAccount != nil else { return report(.metadataUnavailable) }
+        guard queueAccount == account else { return report(.accountChanged) }
+        guard !runtimeBusy, !sessionReservedForLaunch, !isPreparingValveClient,
+              suspendingDownloads == 0 else { return report(.runtimeBusy) }
+        guard let entry = games.first(where: { $0.id == appID }) else { return report(.notOwned) }
+        refreshInstalled()
+        guard installedIDs.contains(appID) else { return report(.notInstalled) }
+        guard diagnosticRepairRequests[appID] == nil, !queuedDownloads.contains(appID),
+              !activeDownloads.contains(appID), !pausedDownloads.contains(appID),
+              downloadTasks[appID] == nil else { return report(.alreadyRequested) }
+        guard !Task.isCancelled else { return report(.cancelled) }
+
+        let requestID = UUID()
+        diagnosticRepairRequests[appID] = DiagnosticRepairRequest(id: requestID, generation: generation)
+        // This is the same entry point as the normal Update / Repair button.
+        download(entry)
+        guard queuedDownloads.contains(appID) || activeDownloads.contains(appID) else {
+            diagnosticRepairRequests.removeValue(forKey: appID)
+            return report(.enqueueRefused)
+        }
+        log("appID=\(appID) status=\(SteamDiagnosticRepairStatus.started.rawValue)")
+        var result: SteamDiagnosticRepairStatus = .interrupted
+        while true {
+            guard generation == accountGeneration, signedIn,
+                  SteamSignIn.accountName == account else { result = .accountChanged; break }
+            guard let request = diagnosticRepairRequests[appID], request.id == requestID else { break }
+            if let outcome = request.outcome { result = outcome; break }
+            if Task.isCancelled { result = .cancelled; break }
+            if runtimeBusy || sessionReservedForLaunch || isPreparingValveClient { result = .runtimeBusy; break }
+            if pausedDownloads.contains(appID) { result = .cancelled; break }
+            if ProcessInfo.processInfo.systemUptime >= deadline { result = .timedOut; break }
+            if !queuedDownloads.contains(appID), !activeDownloads.contains(appID), downloadTasks[appID] == nil { break }
+            do { try await Task.sleep(nanoseconds: 100_000_000) }
+            catch { result = .cancelled; break }
+        }
+        if generation == accountGeneration,
+           let request = diagnosticRepairRequests[appID], request.id == requestID {
+            diagnosticRepairRequests.removeValue(forKey: appID)
+            if result != .completed && result != .failed {
+                // Own request only. Other FIFO entries, explicit pauses and any
+                // downloader journal stay intact for the normal UI to resume.
+                queuedDownloads.removeAll { $0 == appID }
+                repairDownloads.remove(appID)
+                waitingForForeground.remove(appID)
+                backgroundRecoveryCandidates.remove(appID)
+                if let token = request.downloadToken, downloadTokens[appID] == token {
+                    downloadTasks[appID]?.cancel()
+                }
+                persistDownloadQueue()
+                startNextDownload()
+            }
+        }
+        return report(result)
+    }
+
+    private func completeDiagnosticRepair(_ appID: Int, token: UUID, outcome: SteamDiagnosticRepairStatus) {
+        guard var request = diagnosticRepairRequests[appID], request.generation == accountGeneration,
+              request.downloadToken == token else { return }
+        request.outcome = outcome
+        diagnosticRepairRequests[appID] = request
+    }
+
     func removeQueued(_ id: Int) {
         queuedDownloads.removeAll { $0 == id }
         repairDownloads.remove(id)
@@ -303,6 +418,10 @@ final class SteamLibraryModel: ObservableObject {
         let generation = accountGeneration
         let token = UUID()
         downloadTokens[appID] = token
+        if var request = diagnosticRepairRequests[appID], request.generation == generation {
+            request.downloadToken = token
+            diagnosticRepairRequests[appID] = request
+        }
         let task = Task { @MainActor in
             do {
                 try Task.checkCancellation()
@@ -328,6 +447,9 @@ final class SteamLibraryModel: ObservableObject {
                     }
                 guard generation == accountGeneration else { return }
                 refreshInstalled()
+                completeDiagnosticRepair(appID, token: token,
+                    outcome: installedIDs.contains(appID) && !DepotDownloader.hasPartialDownload(
+                        appID: UInt32(appID), steamApps: SteamInstallPaths.steamApps(drive: MadeiraDock.drive)) ? .completed : .failed)
                 error = nil
                 queuedDownloads.removeAll { $0 == appID }
                 repairDownloads.remove(appID)
@@ -348,6 +470,7 @@ final class SteamLibraryModel: ObservableObject {
                         let message = SteamSignIn.message(error)
                         downloadErrors[appID] = message
                         self.error = message
+                        completeDiagnosticRepair(appID, token: token, outcome: .failed)
                     }
                 }
             }

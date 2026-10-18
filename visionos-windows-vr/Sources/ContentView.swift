@@ -88,6 +88,16 @@ struct ContentView: View {
                     await startLaunch()
                 } catch { model.presentLibraryError(error) }
             } else if LaunchDiagnostics.enabled, !didStartDesktopSmokeTest,
+                      let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--steam-repair-test=") }),
+                      let appID = Int(argument.dropFirst("--steam-repair-test=".count)) {
+                didStartDesktopSmokeTest = true
+                showingSteamLibrary = true
+                let library = SteamLibraryModel.shared
+                library.runtimeBusy = !model.canChangeSelection
+                _ = await library.diagnosticRepairInstalledGame(appID: appID, diagnosticsEnabled: true) {
+                    LaunchLogFile.append("steam-repair-test", $0)
+                }
+            } else if LaunchDiagnostics.enabled, !didStartDesktopSmokeTest,
                       let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--steam-smoke-test=") }),
                       let appID = Int(argument.dropFirst("--steam-smoke-test=".count)) {
                 didStartDesktopSmokeTest = true

@@ -92,6 +92,8 @@ def main():
                                      '--build', build / 'steam-guest-architecture'])
     run('steam-download-queue', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_queue.py',
                                   '--build', build / 'steam-download-queue'])
+    run('steam-diagnostic-repair', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_diagnostic_repair.py',
+                                     '--build', build / 'steam-diagnostic-repair'])
     run('steam-background-transfers', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_background_transfers.py',
                                       '--build', build / 'steam-background-transfers'])
     run('steam-download-sizes', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_sizes.py',
@@ -108,6 +110,8 @@ def main():
         skip('mixed-child-selection', 'Set AVPPLAY_LLVM_MINGW_ROOT to compile real x64/i386 fixture executables')
     run('desktop-input', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_input.py',
                           '--build', build / 'desktop-input'])
+    run('desktop-gamepad', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_gamepad.py',
+                            '--build', build / 'desktop-gamepad'])
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
                                     '--build', build / 'desktop-contract'])
     run('guest-runtime-mapping', [python, 'windows-runtime-plugin/Tests/test_guest_runtime_mapping.py',

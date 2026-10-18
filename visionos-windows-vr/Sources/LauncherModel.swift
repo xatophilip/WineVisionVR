@@ -121,6 +121,12 @@ final class LauncherModel {
 
     var selectedSteamAppID: Int? { steamSelection?.game.id }
 
+    /// Only the validated DOSBox selection receives this environment marker.
+    var supportsTombRaiderDesktopControls: Bool {
+        manifest?.id == "steam.shared" && selectedSteamAppID == SteamDOSBoxCompatibility.appID &&
+            presentationModeDraft == .desktop && manifest?.environment["SDL_VIDEODRIVER"] == "windib"
+    }
+
     var canLaunch: Bool {
         guard manifest != nil, gameDirectory != nil,
               !isLaunching, !hasAcceptedLaunch, !isStopping, !requiresRestart,

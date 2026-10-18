@@ -14,12 +14,21 @@ final class WindowsDesktopControls {
     func rightClick() { surface?.rightClick() }
     func scroll(_ delta: Int32) { surface?.scroll(delta) }
     func releaseInput() { surface?.releaseInput() }
+    func gamepadKeys(_ keys: Set<Int32>) { surface?.updateGamepadKeys(keys) }
 }
 
 struct WindowsDesktopView: View {
     @Bindable var model: LauncherModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var controls = WindowsDesktopControls()
+    @State private var gamepad = WindowsDesktopGamepad()
+    @State private var gamepadEnabled = true
+
+    private var gamepadActive: Bool {
+        WindowsDesktopGamepadMapping.allowed(supported: model.supportsTombRaiderDesktopControls,
+            enabled: gamepadEnabled, accepted: model.hasAcceptedLaunch, stopping: model.isStopping,
+            stopRequested: model.stopRequested, requiresRestart: model.requiresRestart, sceneActive: scenePhase == .active)
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -46,6 +55,13 @@ struct WindowsDesktopView: View {
                         .disabled(model.isLaunching)
                 }
             }
+            if model.supportsTombRaiderDesktopControls {
+                HStack {
+                    Toggle("Sense controls", isOn: $gamepadEnabled).fixedSize()
+                    Text("Stick: move · Trigger: action · Primary: jump · Secondary: weapons · Grip: walk · Menu: inventory · Stick click: confirm")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if model.stopRequested || model.requiresRestart {
                 ForceQuitSessionButton()
             }
@@ -65,6 +81,9 @@ struct WindowsDesktopView: View {
         }
         .padding(16)
         .frame(minWidth: 640, minHeight: 480)
+        .task(id: gamepadActive) {
+            await gamepad.run(enabled: gamepadActive) { controls.gamepadKeys($0) }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { controls.releaseInput() }
         }
@@ -102,6 +121,7 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
     private let metalLayer = CAMetalLayer()
     private weak var controls: WindowsDesktopControls?
     private var keysHeld: Set<Int32> = []
+    private var gamepadKeysHeld: Set<Int32> = []
     private var activeTouch: UITouch?
     private var releaseButton: UInt32 = 0
     private var pointer: (Int32, Int32) = (0, 0)
@@ -208,13 +228,21 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
 
     func releaseInput() {
         releasePointer()
-        for key in keysHeld { winios_post_key(key, 0) }
+        for key in keysHeld.union(gamepadKeysHeld).sorted() { winios_post_key(key, 0) }
         keysHeld.removeAll()
+        gamepadKeysHeld.removeAll()
         resignFirstResponder()
     }
 
+    func updateGamepadKeys(_ keys: Set<Int32>) {
+        let next = inputEnabled ? keys : []
+        for key in gamepadKeysHeld.subtracting(next).subtracting(keysHeld).sorted() { winios_post_key(key, 0) }
+        for key in next.subtracting(gamepadKeysHeld).subtracting(keysHeld).sorted() { winios_post_key(key, 1) }
+        gamepadKeysHeld = next
+    }
+
     func pulseKey(_ vk: Int32) {
-        guard inputEnabled, !keysHeld.contains(vk) else { return }
+        guard inputEnabled, !keysHeld.contains(vk), !gamepadKeysHeld.contains(vk) else { return }
         winios_post_key(vk, 1)
         winios_post_key(vk, 0)
     }
@@ -235,7 +263,7 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
         var other: Set<UIPress> = []
         for press in presses {
             if let key = press.key, let vk = WindowsDesktopKeyboard.virtualKey(hidUsage: key.keyCode.rawValue) {
-                if keysHeld.insert(vk).inserted { winios_post_key(vk, 1) }
+                if keysHeld.insert(vk).inserted && !gamepadKeysHeld.contains(vk) { winios_post_key(vk, 1) }
             } else { other.insert(press) }
         }
         // Handled hardware keys bypass UIKit's text insertion, avoiding duplicates.
@@ -246,7 +274,7 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
         var other: Set<UIPress> = []
         for press in presses {
             if let key = press.key, let vk = WindowsDesktopKeyboard.virtualKey(hidUsage: key.keyCode.rawValue) {
-                if keysHeld.remove(vk) != nil { winios_post_key(vk, 0) }
+                if keysHeld.remove(vk) != nil && !gamepadKeysHeld.contains(vk) { winios_post_key(vk, 0) }
             } else { other.insert(press) }
         }
         if !other.isEmpty { super.pressesEnded(other, with: event) }
@@ -258,7 +286,7 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
 
     var hasText: Bool { true }
     func insertText(_ text: String) {
-        guard inputEnabled, keysHeld.isEmpty else { return }
+        guard inputEnabled, keysHeld.isEmpty, gamepadKeysHeld.isEmpty else { return }
         let strokes = text.map { WindowsDesktopKeyboard.stroke(for: $0) }
         guard strokes.allSatisfy({ $0 != nil }) else {
             controls?.inputMessage = L("This keyboard currently supports basic Latin characters and US punctuation.", "Diese Tastatur unterstützt derzeit lateinische Grundzeichen und US-Satzzeichen.")
