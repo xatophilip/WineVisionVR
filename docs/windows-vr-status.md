@@ -1,5 +1,23 @@
 # Windows VR implementation status
 
+## Follow-on runtime work: Audioshield atomic faults (2026-10-18)
+
+The current Audioshield capture (native PID 769) repeats the same unaligned
+32-bit atomic-exchange fault 2,000 times before terminating. Patch 0017 now
+emulates the narrowly identified FEX SWP operation through its guarded atomic
+and writable-alias helpers. A successful operation must advance the host PC;
+unsafe or unsupported cases retain normal guest exception reconstruction and
+cleanup rather than reporting false progress.
+
+The production-function ASan/UBSan tests pass, including 4,000 contended
+exchanges, neighbor-byte preservation and complete exception-fallback cleanup.
+A mutation check rejects the earlier cleanup bug. The complete patched source
+also passes the actual pinned ARM64 MinGW translation-unit syntax check.
+Native linking and headset execution remain outstanding: this is not a claim
+that Audioshield now runs. The separately frozen r11/r12 packages do not contain
+0017; a later full runtime rebuild is required. Standalone experimental atomic
+control programs remain separate from normal packaged fixtures.
+
 ## Pending launcher update: visible session health (2026-10-18)
 
 The launcher distinguishes a confirmed current-game failure from a game that
@@ -45,8 +63,8 @@ reports native ARM64, so the guard applies to this platform. The existing owned
 x64/i386 cube fixtures now log the actual cache API result for headset acceptance.
 
 These are source/local validation results. A new signed runtime, post-fix game
-acceptance and headset cache-line values remain pending. The unrelated 32-bit
-atomic patch 0017 and standalone atomic probes remain separate work in progress.
+acceptance and headset cache-line values remain pending. The separately reviewed 32-bit
+atomic patch 0017 is follow-on source work, excluded from these frozen builds.
 
 ## Latest signed package: launcher action rows (2026-10-18)
 

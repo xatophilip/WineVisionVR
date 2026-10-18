@@ -1,0 +1,94 @@
+# Complete the observed WoW64 unaligned32 SWP through existing FEX atomic
+# recovery after SMC accepts an anonymous executable-page write. Recognized
+# failures retain the normal guest-context reconstruction and JIT cleanup.
+--- a/FEX/Source/Windows/WOW64/Module.cpp
++++ b/FEX/Source/Windows/WOW64/Module.cpp
+@@ -715,6 +715,52 @@
+   Context->Pc += Result.value_or(0);
+   return Result.has_value();
+ }
++
++
++#ifdef FEX_IOS_HOST
++extern "C" uint64_t IosMonoResolveRW(uint64_t HostAddr, uint64_t Size);
++
++// A protected anonymous Mono page can fault as AV before the CPU reports the
++// alignment fault. The normal SMC retry leaves this unaligned SWP unchanged.
++// nullopt: outside this fix; false: recognized access cannot safely complete.
++std::optional<bool> HandleIosSmcUnalignedExchange(TLS TLS, CONTEXT* Context, uint64_t FaultAddress) {
++  auto Thread = TLS.ThreadState();
++  if (!Thread || !Thread->CTX->IsAddressInCodeBuffer(Thread, Context->Pc)) {
++    return std::nullopt;
++  }
++  const uint32_t Instr = *reinterpret_cast<const uint32_t*>(Context->Pc);
++  // Only the observed 32-bit SWP{A}{L}; never route plain/byte stores through
++  // the unaligned backpatcher, which may require reserved neighboring slots.
++  if ((Instr & 0x3F20FC00u) != 0x38208000u || (Instr >> 30) != 2) {
++    return std::nullopt;
++  }
++  const uint32_t Rn = (Instr >> 5) & 31;
++  if (Rn == 31) {
++    return std::nullopt;
++  }
++  const uint64_t Address = Context->X[Rn];
++  if (!(Address & 3)) {
++    return std::nullopt;
++  }
++  // DoCAS32 uses an aligned 64/128-bit CAS when the whole access fits in
++  // sixteen bytes. Do not opt into its split-region fallback here.
++  if (Address != FaultAddress || (Address & 15) > 12) {
++    return false;
++  }
++  const uint64_t Footprint = Address & ~uint64_t{15};
++  if (Footprint > UINT64_MAX - 16) {
++    return false;
++  }
++  const uint64_t Writable = IosMonoResolveRW(Footprint, 16);
++  if (!Writable || (Writable & 15)) {
++    return false;
++  }
++  const uint64_t PreviousPc = Context->Pc;
++  // Existing FEX recovery resolves the same live RX->RW alias and preserves
++  // atomic exchange using aligned CAS; never emulate with a read/write pair.
++  return HandleUnalignedAccess(TLS, Context) && Context->Pc == PreviousPc + 4;
++}
++#endif
+ 
+ #ifdef FEX_IOS_HOST
+ /* MADEIRA: the CPU area is the 32-bit register state other threads see and set.
+@@ -1886,6 +1932,7 @@
+       std::scoped_lock Lock(ThreadCreationMutex);
+       FEXCORE_PROFILE_INSTANT_INCREMENT(Thread, AccumulatedSMCCount, 1);
+       if (InvalidationTracker->HandleRWXAccessViolation(Thread, Context->Pc, FaultAddress)) {
++        bool Handled = true;
+         // MADEIRA: IsAddressInCurrentBlock compares against the block's guest RIP, so this one
+         // needs the fault address in the guest namespace - unlike everything else on this path.
+         const auto GuestFaultAddress = GuestWindow::ToGuestIfInWindow(FaultAddress);
+@@ -1900,9 +1947,25 @@
+           Context->Pc = Config.AbsoluteLoopTopAddressFillSRA;
+           Context->X1 = 1; // Set ENTRY_FILL_SRA_SINGLE_INST_REG to force a single step
+         } else {
+-          LogMan::Msg::DFmt("Handled self-modifying code: pc: {:X} fault: {:X}", Context->Pc, FaultAddress);
++#ifdef FEX_IOS_HOST
++          if (const auto Atomic = Context::HandleIosSmcUnalignedExchange(TLS, Context, FaultAddress); Atomic.has_value()) {
++            // A recognized but unsafe access must reach real exception
++            // delivery, rather than reporting SMC success at an unchanged PC.
++            static std::atomic<uint32_t> AtomicLogs{};
++            if (*Atomic && AtomicLogs.fetch_add(1, std::memory_order_relaxed) < 16) {
++              LogMan::Msg::DFmt("Handled unaligned SMC exchange: new pc: {:X} fault: {:X}", Context->Pc, FaultAddress);
++            }
++            // Preserve the normal JIT exception reconstruction below when
++            // emulation is unsafe. Returning false here would skip the guest
++            // context update, JIT unlock and native entry-context restoration.
++            Handled = *Atomic;
++          } else
++#endif
++          {
++            LogMan::Msg::DFmt("Handled self-modifying code: pc: {:X} fault: {:X}", Context->Pc, FaultAddress);
++          }
+         }
+-        return true;
++        if (Handled) return true;
+       }
+     }
+   }

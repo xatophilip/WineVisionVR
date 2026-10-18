@@ -166,6 +166,9 @@ def main():
     runtime_source = args.runtime_source or env.get('AVPPLAY_RUNTIME_SOURCE')
     if runtime_source:
         runtime_source = Path(runtime_source).expanduser().resolve()
+        run('wow64-smc-atomic', [python, 'windows-runtime-plugin/Tests/test_wow64_smc_atomic.py',
+                                  '--runtime-source', runtime_source,
+                                  '--build', build / 'wow64-smc-atomic'])
         run('wine-cache-topology', [python, 'windows-runtime-plugin/Tests/test_wine_cache_topology.py',
                                     '--runtime-source', runtime_source,
                                     '--build', build / 'wine-cache-topology'])
