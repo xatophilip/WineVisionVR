@@ -1,0 +1,286 @@
+# An i386 pseudo-process needs the native ARM64 ntdll/WoW64 ABI even when
+# its parent session is ARM64EC. Keep private init data and owner dispatch
+# consistent, and resolve colliding native system DLLs through sysaa64.
+--- a/build/ntdll-unix/loader_ios.c
++++ b/build/ntdll-unix/loader_ios.c
+@@ -2264,6 +2264,10 @@
+  */
+ static void load_ntdll_wow64_functions( HMODULE module )
+ {
++    /* A private native child image must receive its OWN guest init block.
++     * Never overwrite the parent EC image or borrow a sibling's guest VAs. */
++    const struct ios_ntdll_funcs *funcs = ios_cur_ntdll_funcs();
++    SYSTEM_DLL_INIT_BLOCK *init_block = funcs ? funcs->LdrSystemDllInitBlock : pLdrSystemDllInitBlock;
+     const IMAGE_EXPORT_DIRECTORY *exports;
+     /* every p* entry of LdrSystemDllInitBlock ends up
+      * in a 32-bit CONTEXT (Eip/Pc for LdrInitializeThunk, the Ki*Dispatchers,
+@@ -2284,9 +2288,9 @@
+     exports = get_module_data_dir( module, IMAGE_FILE_EXPORT_DIRECTORY, NULL );
+     assert( exports );
+ 
+-    pLdrSystemDllInitBlock->ntdll_handle = TO_GUEST( (ULONG_PTR)module );
+-
+-#define GET_FUNC(name) pLdrSystemDllInitBlock->p##name = \
++    init_block->ntdll_handle = TO_GUEST( (ULONG_PTR)module );
++
++#define GET_FUNC(name) init_block->p##name = \
+         TO_GUEST( find_named_export( module, exports, #name ) )
+     GET_FUNC( KiUserApcDispatcher );
+     GET_FUNC( KiUserCallbackDispatcher );
+@@ -2313,12 +2317,17 @@
+     /* also set the 32-bit LdrSystemDllInitBlock (guest address -> host).
+      * Guarded: pLdrSystemDllInitBlock is now 0 if the 32-bit ntdll does not
+      * export it, and writing at wow_base + 0 would scribble on guest page 0. */
+-    if (pLdrSystemDllInitBlock->pLdrSystemDllInitBlock)
+-        memcpy( (void *)((ULONG_PTR)pLdrSystemDllInitBlock->pLdrSystemDllInitBlock + wow_base),
+-                pLdrSystemDllInitBlock, sizeof(*pLdrSystemDllInitBlock) );
++    if (init_block->pLdrSystemDllInitBlock)
++        memcpy( (void *)((ULONG_PTR)init_block->pLdrSystemDllInitBlock + wow_base),
++                init_block, sizeof(*init_block) );
+     else
+         ERR( "[wow-window] 32-bit ntdll has no LdrSystemDllInitBlock export — "
+              "its copy of the init block will stay zero\n" );
++    {
++        extern void ios_jit_sync_write(void *addr, size_t size);
++        ios_jit_sync_write( init_block, sizeof(*init_block) );
++    }
++
+ }
+ 
+ 
+@@ -2441,6 +2450,7 @@
+         if (!((dst) = (void *)find_named_export( module, exports, sym ))) \
+             dprintf(2, "[ec-child-ntdll] export %s NOT FOUND\n", sym)
+ 
++        EC_GET( funcs.LdrSystemDllInitBlock,           "LdrSystemDllInitBlock" );
+         EC_GET( funcs.LdrInitializeThunk,              "LdrInitializeThunk" );
+         EC_GET( funcs.RtlUserThreadStart,              "RtlUserThreadStart" );
+         EC_GET( funcs.KiUserExceptionDispatcher,       "KiUserExceptionDispatcher" );
+@@ -2454,7 +2464,7 @@
+         EC_GET( p__wine_unix_call_dispatcher_arm64ec,  "__wine_unix_call_dispatcher_arm64ec" );
+         EC_GET( p__wine_unixlib_handle,                "__wine_unixlib_handle" );
+ #undef EC_GET
+-        if (!funcs.LdrInitializeThunk || !p__wine_syscall_dispatcher || !p__wine_unixlib_handle)
++        if (!funcs.LdrInitializeThunk || !funcs.LdrSystemDllInitBlock || !p__wine_syscall_dispatcher || !p__wine_unixlib_handle)
+             return -1;
+ 
+         /* Same slot recipe as load_ntdll_functions for the session image. */
+@@ -2570,6 +2580,81 @@
+             ios_jit_translate_addr( funcs.LdrInitializeThunk ));
+ 
+     ios_set_proc_ntdll( child_peb, module, &funcs );
++    return 0;
++}
++#endif
++
++#ifdef WINE_IOS
++
++/* Inverse mixed-architecture case: an i386 child of an EC session runs the
++ * native ARM64 WoW64 core, just like a top-level i386 process. EC ntdll's
++ * AMD64 CONTEXT APIs and variadic ABI cannot host native ARM64 wow64/xtajit.
++ * Map a fresh native image; never retarget the parent's session globals. */
++static int ios_load_child_native_ntdll( PEB *child_peb )
++{
++    static WCHAR path[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','a','6','4','\\','n','t','d','l','l','.','d','l','l',0};
++    extern void ios_jit_sync_write(void *addr, size_t size);
++    extern void *ios_jit_reverse_translate_addr(const void *addr);
++    extern int ios_teb_tls_slot_offset;
++    const char *pe_dir = get_pe_dir( IMAGE_FILE_MACHINE_ARM64 );
++    const IMAGE_EXPORT_DIRECTORY *exports;
++    struct ios_ntdll_funcs funcs = { NULL };
++    SECTION_IMAGE_INFORMATION info;
++    OBJECT_ATTRIBUTES attr;
++    UNICODE_STRING str;
++    void *module;
++    void **syscall_slot, **unix_slot, **reverse_slot;
++    unixlib_handle_t *unix_handle;
++    unsigned int *tsd_offset;
++    SIZE_T size = 0;
++    unsigned int status;
++    char *name = NULL;
++
++    init_unicode_string( &str, path );
++    InitializeObjectAttributes( &attr, &str, 0, 0, NULL );
++    if (build_dir) asprintf( &name, "%s%s/ntdll.dll", ntdll_dir, pe_dir );
++    else asprintf( &name, "%s%s/ntdll.dll", dll_dir, pe_dir );
++    dprintf(2, "[native-child-ntdll] loading %s for peb=%p\n", name, (void *)child_peb);
++    status = open_builtin_pe_file( name, &attr, &module, &size, &info, 0, 0,
++                                   IMAGE_FILE_MACHINE_ARM64, FALSE, 0 );
++    free( name );
++    if (status == STATUS_IMAGE_NOT_AT_BASE) status = virtual_relocate_module( module );
++    if (status || info.Machine != IMAGE_FILE_MACHINE_ARM64) return -1;
++    if (!(exports = get_module_data_dir( module, IMAGE_DIRECTORY_ENTRY_EXPORT, NULL ))) return -1;
++
++#define NATIVE_GET(dst, sym) do { \
++        if (!((dst) = (void *)find_named_export( module, exports, sym ))) { \
++            dprintf(2, "[native-child-ntdll] missing required export %s\n", sym); \
++            return -1; \
++        } \
++    } while (0)
++    NATIVE_GET( funcs.LdrInitializeThunk,         "LdrInitializeThunk" );
++    NATIVE_GET( funcs.LdrSystemDllInitBlock,      "LdrSystemDllInitBlock" );
++    NATIVE_GET( funcs.RtlUserThreadStart,         "RtlUserThreadStart" );
++    NATIVE_GET( funcs.KiUserExceptionDispatcher,  "KiUserExceptionDispatcher" );
++    NATIVE_GET( funcs.KiUserApcDispatcher,        "KiUserApcDispatcher" );
++    NATIVE_GET( funcs.KiUserCallbackDispatcher,   "KiUserCallbackDispatcher" );
++    NATIVE_GET( funcs.KiRaiseUserExceptionDispatcher, "KiRaiseUserExceptionDispatcher" );
++    NATIVE_GET( funcs.DbgUiRemoteBreakin,         "DbgUiRemoteBreakin" );
++    NATIVE_GET( syscall_slot,                    "__wine_syscall_dispatcher" );
++    NATIVE_GET( unix_slot,                       "__wine_unix_call_dispatcher" );
++    NATIVE_GET( unix_handle,                     "__wine_unixlib_handle" );
++    NATIVE_GET( tsd_offset,                      "ios_teb_tsd_offset" );
++    NATIVE_GET( reverse_slot,                    "p_ios_jit_reverse_translate_addr" );
++#undef NATIVE_GET
++    *syscall_slot = __wine_syscall_dispatcher;
++    *unix_slot = __wine_unix_call_dispatcher;
++    *unix_handle = (UINT_PTR)unix_call_funcs;
++    *tsd_offset = (unsigned int)ios_teb_tls_slot_offset;
++    *reverse_slot = (void *)ios_jit_reverse_translate_addr;
++    ios_jit_sync_write( syscall_slot, sizeof(*syscall_slot) );
++    ios_jit_sync_write( unix_slot, sizeof(*unix_slot) );
++    ios_jit_sync_write( unix_handle, sizeof(*unix_handle) );
++    ios_jit_sync_write( tsd_offset, sizeof(*tsd_offset) );
++    ios_jit_sync_write( reverse_slot, sizeof(*reverse_slot) );
++    ios_set_proc_ntdll( child_peb, module, &funcs );
++    dprintf(2, "[native-child-ntdll] mapped %p machine=0x%x LdrInitializeThunk=%p init_block=%p\n",
++            module, info.Machine, funcs.LdrInitializeThunk, funcs.LdrSystemDllInitBlock);
+     return 0;
+ }
+ #endif
+@@ -3794,6 +3879,14 @@
+                              (unsigned)status, (void *)ios_wow_base(),
+                              (void *)user_space_wow_limit );
+ 
++        /* Choose the native host before publishing guest ntdll init data. */
++        if (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_I386 && is_arm64ec())
++        {
++            CHILD_STAGE( "load_child_native_ntdll" );
++            if (ios_load_child_native_ntdll( child_peb ) != 0)
++                CHILD_BOOT_FAIL( "native ntdll load failed for i386 child\n" );
++        }
++
+         /* a 32-bit child needs its own i386 ntdll mapped
+          * (and LdrSystemDllInitBlock filled with GUEST addresses) exactly as
+          * start_main_thread does for the session's main process.  The child
+@@ -3803,8 +3896,12 @@
+             CHILD_STAGE( "load_wow64_ntdll" );
+             load_wow64_ntdll( ios_cur_image_info()->Machine );
+             ERR( "[Wine child] i386 ntdll bound: ntdll_handle=%p LdrInitializeThunk=%p (guest)\n",
+-                 (void *)(ULONG_PTR)pLdrSystemDllInitBlock->ntdll_handle,
+-                 (void *)(ULONG_PTR)pLdrSystemDllInitBlock->pLdrInitializeThunk );
++                 (void *)(ULONG_PTR)(ios_cur_ntdll_funcs() ?
++                     ((SYSTEM_DLL_INIT_BLOCK *)ios_cur_ntdll_funcs()->LdrSystemDllInitBlock)->ntdll_handle :
++                     pLdrSystemDllInitBlock->ntdll_handle),
++                 (void *)(ULONG_PTR)(ios_cur_ntdll_funcs() ?
++                     ((SYSTEM_DLL_INIT_BLOCK *)ios_cur_ntdll_funcs()->LdrSystemDllInitBlock)->pLdrInitializeThunk :
++                     pLdrSystemDllInitBlock->pLdrInitializeThunk) );
+         }
+ 
+         /* start_main_thread runs load_apiset_dll() right after load_wow64_ntdll;
+@@ -3828,7 +3925,7 @@
+             if (ios_load_child_ec_ntdll( child_peb ) != 0)
+                 CHILD_BOOT_FAIL( "EC ntdll load failed — a cross-arch child cannot start\n" );
+         }
+-        else
++        else if (!ios_cur_ntdll_funcs())
+         /* S1: per-child ntdll copy. The child cannot share the parent's
+          * ntdll .data (module list / loader lock / hash table collide), so
+          * copy the whole ntdll image into a fresh pool slot owned by this
+--- a/build/ntdll-unix/ios_mixed.h
++++ b/build/ntdll-unix/ios_mixed.h
+@@ -14,6 +14,7 @@
+ struct ios_ntdll_funcs
+ {
+     void *LdrInitializeThunk;
++    void *LdrSystemDllInitBlock;
+     void *RtlUserThreadStart;
+     void *KiUserExceptionDispatcher;
+     void *KiUserApcDispatcher;
+--- a/build/ntdll-unix/signal_arm64_ios.c
++++ b/build/ntdll-unix/signal_arm64_ios.c
+@@ -13414,6 +13414,7 @@
+     CONTEXT *ctx, context = { CONTEXT_ALL };
+     I386_CONTEXT *i386_context;
+     ARM_CONTEXT *arm_context;
++    SYSTEM_DLL_INIT_BLOCK *init_block = IOS_PFUNC(LdrSystemDllInitBlock);
+ 
+     context.X0  = (DWORD64)entry;
+     context.X1  = (DWORD64)arg;
+@@ -13423,7 +13424,7 @@
+ 
+     /* Every register of the initial 32-bit context is a GUEST value.  `entry`
+      * and `arg` arrive as host pointers, wow_peb is the host PEB32, and
+-     * pLdrSystemDllInitBlock->pRtlUserThreadStart is already published guest.
++     * init_block->pRtlUserThreadStart is already published guest.
+      * Without a guest window wow_base is 0 and this is the upstream code. */
+     ULONG_PTR wow_base = ios_wow_base_for_peb( teb->Peb );
+ #define IOS_WOW_GUEST_IN(ptr) ios_wow_guest_in( (ptr), wow_base )
+@@ -13435,7 +13436,7 @@
+         i386_context->Eax = IOS_WOW_GUEST_IN( entry );
+         i386_context->Ebx = IOS_WOW_GUEST_IN( arg == peb ? (void *)wow_peb : arg );
+         i386_context->Esp = get_wow_teb( teb )->Tib.StackBase - 16;
+-        i386_context->Eip = pLdrSystemDllInitBlock->pRtlUserThreadStart;
++        i386_context->Eip = init_block->pRtlUserThreadStart;
+         i386_context->SegCs = 0x23;
+         i386_context->SegDs = 0x2b;
+         i386_context->SegEs = 0x2b;
+@@ -13453,7 +13454,7 @@
+         arm_context->R0 = IOS_WOW_GUEST_IN( entry );
+         arm_context->R1 = IOS_WOW_GUEST_IN( arg == peb ? (void *)wow_peb : arg );
+         arm_context->Sp = get_wow_teb( teb )->Tib.StackBase;
+-        arm_context->Pc = pLdrSystemDllInitBlock->pRtlUserThreadStart;
++        arm_context->Pc = init_block->pRtlUserThreadStart;
+         if (arm_context->Pc & 1) arm_context->Cpsr |= 0x20; /* thumb mode */
+     }
+ #undef IOS_WOW_GUEST_IN
+--- a/wine/dlls/ntdll/loader.c
++++ b/wine/dlls/ntdll/loader.c
+@@ -3111,6 +3111,14 @@
+ static BOOL is_valid_binary( HANDLE file, const SECTION_IMAGE_INFORMATION *info )
+ {
+     if (info->Machine == current_machine) return TRUE;
++#ifdef __aarch64__
++    /* The native WoW64 core needs native ARM64 exports. Preserve a
++     * normalized ARM64 view; reject EC/hybrid machine identities before
++     * the blanket WoW64 allowance so the native sysaa64 retry can run. */
++    if (NtCurrentTeb()->WowTebOffset &&
++        (info->Machine == IMAGE_FILE_MACHINE_AMD64 || info->Machine == IMAGE_FILE_MACHINE_ARM64EC ||
++         info->Machine == IMAGE_FILE_MACHINE_ARM64X)) return FALSE;
++#endif
+     if (NtCurrentTeb()->WowTebOffset) return TRUE;
+     /* support ARM64EC binaries on x86-64 */
+     if (current_machine == IMAGE_FILE_MACHINE_AMD64 && has_chpe_metadata( file, info )) return TRUE;
+@@ -3989,6 +3997,33 @@
+         status = open_dll_file( nt_name, pwm, mapping, image_info, id );
+ 
+     if (status == STATUS_NOT_SUPPORTED) status = STATUS_INVALID_IMAGE_FORMAT;
++
++#ifdef __aarch64__
++    /* A native WoW64 child of an EC parent has native ntdll but shares the
++     * parent's EC system32 links. Match the existing EC inverse retry. */
++    if (NtCurrentTeb()->WowTebOffset &&
++        (status == STATUS_INVALID_IMAGE_FORMAT || status == STATUS_DLL_NOT_FOUND))
++    {
++        static const WCHAR sysaa64W[] = L"\\??\\C:\\windows\\sysaa64\\";
++        WCHAR buf[MAX_PATH];
++        UNICODE_STRING alt;
++        const WCHAR *base = libname, *p;
++        for (p = libname; *p; p++) if (*p == '\\' || *p == '/') base = p + 1;
++        if (wcslen( base ) + ARRAY_SIZE( sysaa64W ) + 4 < MAX_PATH)
++        {
++            wcscpy( buf, sysaa64W );
++            wcscat( buf, base );
++            if (!wcschr( base, '.' )) wcscat( buf, L".dll" );
++            RtlInitUnicodeString( &alt, buf );
++            if (!open_dll_file( &alt, pwm, mapping, image_info, id ))
++            {
++                if (nt_name->Buffer) RtlFreeUnicodeString( nt_name );
++                if (RtlCreateUnicodeString( nt_name, buf )) status = STATUS_SUCCESS;
++                else status = STATUS_NO_MEMORY;
++            }
++        }
++    }
++#endif
+ 
+ #ifdef __arm64ec__
+     /* iOS-Madeira mixed-arch pseudo-processes: in a native-ARM64 session the

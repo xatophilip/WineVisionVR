@@ -174,6 +174,13 @@ def main():
         skip('mouse-activation', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('jit-pool-arbitration', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
 
+    if runtime_source:
+        run('native-child-bootstrap', [python, 'windows-runtime-plugin/Tests/test_native_child_bootstrap.py',
+                                       '--runtime-source', runtime_source,
+                                       '--build', build / 'native-child-bootstrap'])
+    else:
+        skip('native-child-bootstrap', 'Requires prepared pinned Madeira source')
+
     if runtime_source and all((runtime_source / "app/Madeira" / name).is_file() for name in
                               ("aarch64-windows/wow64.dll", "arm64ec-windows/ntdll.dll")):
         run('native-arm64-import-redirection', [python, 'windows-runtime-plugin/Tests/test_native_arm64_import_redirection.py',
