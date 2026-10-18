@@ -77,6 +77,24 @@ logging records only the app ID and numeric status. It does not launch Wine or
 forge installation state. Success is tied to the actual normal installer
 completion; existing queue entries and user account checks are preserved.
 
+## Main-app headset follow-up (2026-10-18)
+
+After the restart, r8 installed under the original bundle identity. The explicit
+`--steam-smoke-test=224960` launch succeeded with native PID 630. Its current
+JIT handoff completed, the flat desktop surface attached, Steam reported
+`launch-client-error=0`, and the user confirmed seeing Tomb Raider's intro video.
+The bounded app journal identifies app 224960, x86 and the shared Steam prefix.
+This supersedes the earlier battery-interrupted attempt as execution evidence;
+it does not yet establish playable levels, working Sense input, sustained speed
+or audio quality. Use the right Sense controller's small Options button to send
+Escape/skip the intro, stick click for Enter and the stick for movement.
+
+Local evidence is under `/Volumes/XRDev/build/WineVisionVR/startup-oct18-r8/`:
+`tomb-launch.json`, `tomb-launcher-1.txt`, `tomb-session-journal.json` and their
+successful copy receipts. A failed transfer of the live runtime log is preserved
+separately as `tomb-runtime-1-copy.json`; the partial file is not used as evidence.
+No fresh repair or appmanifest edits were needed for this launch.
+
 ## Opt-in local integration and provider controls
 
 `windows-vr-tools/test_tomb_dosbox_wine.py --help` describes the opt-in macOS

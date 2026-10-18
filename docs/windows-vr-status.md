@@ -33,10 +33,47 @@ identify its source, inputs and sealed bytes. The complete audit SHA-256 is
 `6aa18d52203f0f944d309b0d5b769417c5461a73b8fa602588f13a0d68fe8c39`. The broader suite report is
 `/Volumes/XRDev/build/WineVisionVR/startup-host-suite-oct18/results.json`.
 
-A bounded connection check after the build still reported Vision Pro unavailable.
-The new package has **not been installed or run on the headset**; r6 remains the
-last recorded installation. Fresh VR startup, pause/reentry, both Sense
-controllers and per-game acceptance remain pending when the headset is reachable.
+After the headset restarted, r8 installed successfully under the original main
+bundle identifier. All ten existing Steam app manifests remain present. Fresh
+headset controls passed both direct i386 (PID 559) and x64-parent-to-i386-child
+(PID 569) exception handling/continuation, with exact packaged fixture hashes,
+fresh result markers, the r8 plugin UUID above and Wine exit zero. The automated
+runner completed successfully, including its owned-process cleanup. Evidence is
+`startup-oct18-r8/device-install.json` and
+`startup-oct18-r8/device-controls-run-2/result.json` under the external build root.
+
+The preceding attempt is retained as `device-controls-run-1`: it timed out waiting
+for StikDebug after reboot, before Wine ran, then exhausted its bounded capture
+window. It is not a game/runtime failure or a passing test. The successful retry
+followed confirmation that LocalDevVPN and StikDebug were both connected.
+Fresh x64 and i386 VR smoke scenes also rendered visibly in both eyes with
+matching backgrounds and working head movement, confirmed by the user. Fresh
+current-PID logs show both Sense controllers connected and tracked, stereo targets
+with valid render poses, and successful guest/presentation GPU completion. In
+the x64 sample, guest GPU completions advanced 285 to 1,185 and presentation
+completions 575 to 1,477 over 10.023 seconds, with zero GPU failures. The i386
+sample reached guest completion 370 and presentation completion 627 before the
+user left the view/removed the headset; its subsequent layer invalidation is not
+recorded as a spontaneous crash or a sustained-stability pass. Captures are
+`startup-oct18-r8/vr-x64-run-1`, `startup-oct18-r8/vr-x86-run-1` and the latter's
+`vr-x86-followup-*` files in the same build root. These controlled scenes do not
+establish game compatibility, deliberate controller actions, or pause/reentry.
+
+Windlands was separately reported **playable on r8**. Its current-session
+launcher shows both Sense controllers connected/tracked and guest GPU completions
+271 to 3,139 plus presentation completions 1,948 to 5,046 over 35.061 seconds,
+with zero GPU failures. The retained native log confirms PID 607, the r8 plugin
+UUID and the actual x64 Windlands/OpenVR/OpenXR modules. The original automatic
+capture stopped on a live-log socket-copy failure and remains failed; this
+result uses a separate successful recovery of the immutable rotated log and
+user feedback. See `startup-oct18-r8/windlands-recovered-evidence.json`.
+The later process switch included a CyberThreat selection; the record does not
+establish why PID 607 ended or imply a CyberThreat gameplay result.
+
+The subsequent Tomb Raider I run reached its intro video on a flat desktop,
+confirmed by the user. Its diagnostic journal identifies Steam app 224960,
+x86 and the shared signed-in prefix. Sense control/gameplay, sustained speed
+and audio acceptance remain pending; see [DOSBox status](windows-desktop-dosbox.md).
 
 ## Fork checkpoint (2026-10-18)
 
@@ -89,8 +126,8 @@ cancellation/pause/invalidation at setup/fallback suspension points. The exact
 prior source reproduces the failed-startup latch. Independent review, pinned
 visionOS API typechecking and source parsing passed. This does not execute an
 ARKit service or prove total authorization/pause timing or global renderer-task
-exclusivity. The signed r8 app build above has now passed; physical acceptance
-remains pending.
+exclusivity. The signed r8 app build and the physical startup/stereo controls above have
+passed; game acceptance and pause/reentry remain separate checks.
 External evidence is under `cold-start-review-oct18/tracking-final/` beside the
 other build records.
 
