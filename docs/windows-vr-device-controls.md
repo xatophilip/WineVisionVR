@@ -38,3 +38,13 @@ python3 windows-vr-tools/tests/test_device_controls.py \
 Add `--cli-help` to the development test command to verify the installed CLI accepts integer timeout tokens and rejects `20.0`, using only `devicectl --help` with no device selection.
 
 The host tool and documentation can change independently of the frozen runtime/app build. Passing fake tests establishes runner behavior, not headset/runtime success.
+
+The private r6 captures can also be replayed without the headset or another package preflight:
+
+```sh
+python3 windows-vr-tools/tests/test_device_controls_replay.py \
+  --r6 /Volumes/XRDev/build/WineVisionVR/child-loader-oct18-r6 \
+  --build /Volumes/XRDev/build/WineVisionVR/device-controls-contract
+```
+
+This runs the actual default direct-to-mixed orchestrator with recorded launch results, metadata, socket failures, markers and exact PE bytes. It verifies the recovery receipts' source hashes, preserves the direct archive's exact bytes and reconstructs its later current-launcher snapshot from an append-only prefix. Runtime proof excerpts are trimmed locally; their recorded remote metadata sizes stay unchanged. The direct runtime row comes from the actual later listing before mixed launch. A virtual clock makes the preserved evidence available within each normal phase deadline. Combined success requires both phases and both recovered copy failures; six mutations independently remove fresh archive, attachment, parent PASS, parent exit, valid marker or exact PE proof. Private inputs, copied logs and source/proof ledgers stay in the external output directory. This is an offline runner regression, not new headset evidence.
