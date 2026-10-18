@@ -1,5 +1,43 @@
 # Windows VR implementation status
 
+## Fresh r14 WOW64 bridge build (2026-10-18)
+
+The source-proven missing WOW64 Mono bridge handoff is implemented in patch
+0019; see [the integration evidence and contract](windows-wow64-mono-bridge.md).
+A fresh normal runtime and signed app build from
+`a4af9f0c31b3cf54b426e430116b6a8958007943` passes the strict package audit,
+including actual linked ARM64 NTDLL getter, WOW64 initialization path and FEX
+setter checks. All six exact-packaged Mac controls pass, with full app,
+signatures, native artifacts and 0019 bindings unchanged before and after.
+This is a new native/runtime build, not an overlay of r13 binaries.
+
+Evidence is retained in `compatibility-oct18-r14` under the external build root:
+`verified-app-complete.json` SHA-256
+`c7b2beb5d0ddef973ce5e14dac303b5f441f23bad4997ff0316dbe235e14e247`;
+`final-six-local-controls/result.json` SHA-256
+`a8edd8e004490d52a71234266b5ee2564c0e8ef13edf196e7078831e99b616fe`.
+The signed plugin UUID is `43F0E055-5A95-333B-AE21-4185DA850578`.
+
+Installation succeeds on the headset. The i386 cube's native PID 1211 loads
+that exact plugin and completes 7247 stereo frames in the successful capture,
+with valid stereo targets and tracked head poses. Its latest sample is 90 Hz
+display / 88.6 guest updates/s, with zero captured GPU failures. A 58-second
+sample gap and one lower averaged window remain explicit; this is not a claim
+of uninterrupted 90 FPS or repaired pause/resume behavior. The test is ended
+with an explicit owned-process SIGKILL after capture.
+
+Audioshield PID 1252 also loads the new plugin. The initial runtime capture
+contains bridge registration and offset publication, but does not yet prove
+the recorded `0x207` atomic exchange was handled or that game frames arrived.
+Subsequent file-service transfers fail or time out, including after the owned
+test process is stopped. That capture limitation is preserved; Audioshield
+is not marked working. Read-only nonrecursive Documents metadata and one later
+runtime/launcher pair recovered the cube evidence, while the alternate DeviceFS
+app-data listing also stalled. Further result collection is being investigated.
+
+Current successful and failed receipts are in `headset-r14-oct18`; earlier
+r13 and r12 results below retain their original build identities.
+
 ## Fresh r13 build and local controls (2026-10-18)
 
 A clean normal runtime and signed Release app build from
