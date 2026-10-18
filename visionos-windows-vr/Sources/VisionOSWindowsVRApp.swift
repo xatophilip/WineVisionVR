@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct VisionOSWindowsVRApp: App {
@@ -18,6 +19,8 @@ struct VisionOSWindowsVRApp: App {
         WindowGroup {
             ContentView(model: launcherModel)
                 .onChange(of: scenePhase, initial: true) { _, phase in
+                    // Keep foreground diagnostics awake; device locks and headset removal still require the user.
+                    UIApplication.shared.isIdleTimerDisabled = LaunchDiagnostics.enabled && phase == .active
                     SteamLibraryModel.shared.applicationActivityChanged(phase == .active)
                     LaunchLogFile.append("lifecycle", "App scene phase=\(String(describing: phase)) uptime=\(ProcessInfo.processInfo.systemUptime) thermal=\(ProcessInfo.processInfo.thermalState.rawValue)")
                 }
