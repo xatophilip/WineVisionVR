@@ -101,6 +101,8 @@ def main():
                                       '--build', build / 'desktop-demo-selection'])
     else:
         skip('desktop-demo-selection', 'Set AVPPLAY_LLVM_MINGW_ROOT to compile real x64/i386 fixture executables')
+    run('desktop-input', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_input.py',
+                          '--build', build / 'desktop-input'])
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
                                     '--build', build / 'desktop-contract'])
     run('guest-runtime-mapping', [python, 'windows-runtime-plugin/Tests/test_guest_runtime_mapping.py',

@@ -289,3 +289,108 @@ that reproduction, not directly logged on the headset.
 This patch requires a new source profile and full package build with the current
 receipt model. The r3 native runtime was not modified. Hardware confirmation is
 still required; the preceding activation-only fix was insufficient.
+
+
+## Local testing gate for the next device build
+
+The 18 October r4 package was assembled from a clean export of `63543bd`,
+including parent-cache patch `0014`. Source/resource provenance, complete guest
+import closure, Release signing, diagnostics and debugging entitlements passed.
+The runtime plugin UUID is `A616C513-818F-3767-8915-E594AAD36635`; the launcher
+UUID remains `D9C9C908-F2A8-341C-B54D-3FD6D9C8542F` because its code did not
+change. Use the plugin identity when distinguishing this build from r3.
+
+The deployment gate required local execution of authored dummy executables, at
+the user's request; those checks completed before the device installation. Six focused host check groups passed: production Wine parent
+lookup and activation paths with sanitizers, startup-watchdog markers, compiled
+x64/i386 desktop fixture selection, the native desktop launch contract, and
+production Swift input method sequences. The last test is now part of
+`windows-vr-tools/test_local.py`; UIKit, coordinate conversion and native input
+delivery are explicit recording mocks. It covers clicks, drag ownership,
+secondary click, cancellation, signed scroll, hardware key repetition/release,
+soft-keyboard mapping and cleanup. It does not execute Windows or a GUI.
+
+The pre-existing Mac Wine bootstrap runtime cannot serve as the full dummy-app
+test environment: it has no i386 loader and was configured without FreeType.
+An actual x64 desktop run created the window and incremented its injected-click
+counter, then faulted in Wine text shaping before completion. The authored x64
+VR fixture's CPU-only mode passed, but that does not exercise graphics or VR.
+A separate font-enabled WOW64 host runtime was then built with isolated prefixes.
+Both architectures passed with byte-identical copies of the four executables in
+the signed r4 package:
+
+| Local executable check | x64 | i386 |
+| --- | --- | --- |
+| Desktop: injected click, edit, programmatic button, save/load, UTF-8 roundtrip | PASS (64-bit) | PASS (32-bit) |
+| CPU: arithmetic `0xf0d18bc8`, signaled event, exit status zero | PASS (64-bit) | PASS (32-bit) |
+
+Each desktop result explicitly reported all six checks equal to one and the
+expected pointer width. An independent agent rehashed all 99 staged runtime PE
+modules in each prefix and checked the live memory maps: no old runtime fallback
+was found. Local execution used new same-source modules and FreeType, with stock
+registry/directory state from the verified same-pin prefix template. Template
+runtime binaries and links were rejected; new modules were staged by architecture.
+Fresh Wine prefix bootstrap remains incomplete in this targeted Mac test build
+and was deliberately not tested by these successful fixture runs. No user
+Steam/Wine prefix or working main Vision Pro app was changed.
+
+Local receipts and logs are retained under
+`/Volumes/XRDev/build/WineVisionVR/local-dummy-oct18`; signed r4 artifacts and
+build verification are under `x86-modern-oct18-r4`. These machine-local test
+artifacts and device credentials are not committed. Hardware input, FEX and
+D3D/OpenVR rendering still need separate headset validation.
+
+
+### Repeat actual local dummy execution
+
+`windows-vr-tools/test_dummy_wine.py` preserves the executed runner. It requires
+a Mac Wine build with x86_64 and i386 PE modules, a working x86_64 FreeType
+backend, and an output directory outside the repository. Our host profile used
+Wine `257f271cfffed9f22f7987cac53bc00095d092fe` (11.4), FreeType
+`42608f77f20749dd6ddc9e0536788eaad70ea4b5`, and Rosetta on Apple Silicon.
+Wine configure included `--enable-archs=i386,x86_64 --with-freetype --without-x`,
+x86_64 host compilers and native build tools from `--with-wine-tools`. This is
+a separate Mac test runtime, not the packaged visionOS runtime. The exact local
+configure/build recipe and source hashes are retained in the build receipt.
+
+Stage the app package's four EXEs under a separate fixture root (copy the exact
+packaged artifacts, not recompilations):
+
+| App resource | Fixture-root destination |
+| --- | --- |
+| `DesktopDemo/desktop-demo.exe` | `x64/desktop-demo.exe` |
+| `DesktopDemoX86/desktop-demo.exe` | `x86/desktop-demo.exe` |
+| `VRSmoke/vr-smoke.exe` | `vr-x64/vr-smoke.exe` |
+| `VRSmokeX86/vr-smoke.exe` | `vr-x86/vr-smoke.exe` |
+
+```sh
+python3 windows-vr-tools/test_dummy_wine.py \
+  --wine-build /external/host/wine-build \
+  --wine-source /external/host/wine-source \
+  --fixture-root /external/packaged-fixtures \
+  --freetype-lib /external/host/freetype-install/lib/libfreetype.6.dylib \
+  --output-root /external/dummy-results \
+  --prefix-template /external/prefix-template.tar.gz \
+  --template-sha256 HASH_FROM_VERIFIED_PREFIX_RECEIPT
+```
+
+All paths must be absolute. The optional template must contain only stock prefix
+state (no runtime DLLs, executables or links); its hash must match the caller's
+verified provenance. Our run used template SHA256
+`88659fe2aa9c18a3803f5358d0fa1817feaf7f01aefa6a0e946a88515485fb53`. The
+runner stages new same-build modules into each isolated architecture directory,
+seeds Wine's open fonts and skips the template's INF reinstall using the matching
+source timestamp. This explicitly leaves first-run prefix initialization outside
+the result. Omitting the template attempts fresh prefix initialization and needs
+a complete Mac Wine installation, beyond our targeted fixture module build.
+
+Each invocation creates new result directories, checks complete result lines and
+expected pointer widths, records executable/module hashes and captures memory
+maps. Desktop windows intentionally stay open; the runner stops only its own
+WINEPREFIX after capturing results. A CPU-only PASS never implies OpenVR or GPU
+rendering passed. Keep this tool separate from the no-Wine host contract runner.
+
+The separate r4 test app installed successfully after the local gate passed,
+at bundle path `DD31ECBE-77E7-47CB-9932-FADD45B25F1C`. Xcode's automatic
+open request timed out and the subsequent process list contained no WineVision
+process. Hardware retesting is pending; this is not a device self-test PASS.
