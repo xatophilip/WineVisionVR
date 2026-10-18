@@ -1,5 +1,35 @@
 # Windows VR implementation status
 
+## Fresh r13 build and local controls (2026-10-18)
+
+A clean normal runtime and signed Release app build from
+`1b130cad5283d0fa44eeae57d4bc8155bc5840c7` passes package validation and
+all six exact-packaged local controls: x64/i386 GDI and CPU tests, direct i386
+exception handling, and x64-parent/i386-child exception handling. The complete
+app ledger, signatures, 19 fresh native archives, runtime receipts and test
+inputs remain unchanged before and after execution. These are Mac Wine/Rosetta
+controls, not execution of the headset FEX runtime or game acceptance.
+
+The package includes the corrected 32-bit unaligned SMC exchange/reset path,
+the stale controller-anchor removal fix, OpenComposite's base-mip adapter and
+the opt-in CyberThreat Fastest diagnostic. Their actual production-source
+contracts pass; the adapter contract runs against all three prepared variants.
+The Lab's separate quad-overlay composition limitation remains unresolved.
+
+App UUID: `C729952F-1EFE-38F5-97B2-B2FD7C00ECA8`; plugin UUID:
+`A0A454AF-8C4A-3989-B2D9-7D91BC95E49A`. Evidence is retained under
+`/Volumes/XRDev/build/WineVisionVR/compatibility-oct18-r13`:
+`verified-app-complete.json` (SHA-256
+`8900a571feb4e40729390a14d5cd75634b2e4eddc6f390ac21ca35ba1378a045`)
+and `final-six-local-controls/result.json` (SHA-256
+`686d2f741b359448ff43db4437352f66ed9f7c4e97d4077beb5b241953d9e472`).
+No previous runtime target objects or generated resource receipts were reused.
+
+The headset was reachable after local validation, but its actual lock-state
+receipt reported `passcodeRequired: true`. Installation and r13 headset/game
+retests remain pending an unlock; the earlier r12 results below are not
+relabeled as r13 results. Existing Steam login and downloaded games are retained.
+
 ## Optional CyberThreat low-memory diagnostic (2026-10-18)
 
 The actual game's Unity 5.6.3f1 QualitySettings data contains a `Fastest`
@@ -92,7 +122,7 @@ Raw receipts and independent reviews are retained externally under
 could not be inspected through the computer-control tool (timeout); only
 the user's quoted visual response is counted as visual acceptance.
 
-## Latest signed package: Lab/Tilt runtime and health UI (2026-10-18)
+## Earlier signed packages: Lab/Tilt runtime and health UI (2026-10-18)
 
 The fresh r11 native/guest/graphics runtime built from
 `50763089dc909184b2d1f0bd233e6531fb863392` passes the strict signed-package audit
