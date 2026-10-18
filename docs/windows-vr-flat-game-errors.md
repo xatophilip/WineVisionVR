@@ -78,3 +78,17 @@ The signed visionOS build and bundle/profile checks also passed. A requested
 automatic Tomb Raider preflight reused an already-running app process, so it
 did not establish the new error behavior on the headset. Tomb Raider gameplay
 remains unvalidated and blocked by the known 32-bit requirement.
+
+
+## Latest Tilt Brush attempt, 18 October 2026
+
+The `232A90B4` session began at 12:27:58.950 BST using the still-installed r4
+runtime `05dca43b`. By 12:29:01 it recorded 529 submitted and 528 completed guest
+frames, with an approximately ten-second interval without a new guest frame.
+Both controllers were connected and tracked. The missing-WMIC error persisted;
+the player log recorded 575 managed null references (574 pointer updates and one
+SketchCatalog). These were handled/passed through and do not establish a fatal
+crash. Audio diagnostics reported zero silent source windows, zero peak/clipped
+samples, and no logged underrun or overload; the user's reported clicking remains
+unexplained. Home returned to normal after the app exited. Tilt Brush was not
+retried, and this capture does not test the newer r5 package.

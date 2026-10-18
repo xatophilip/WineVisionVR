@@ -37,7 +37,7 @@ NATIVE_ARCHIVES = (
 WINE_TOOLS = {
     "wineboot.exe", "services.exe", "winedevice.exe", "explorer.exe",
     "conhost.exe", "rundll32.exe", "start.exe", "plugplay.exe", "ntoskrnl.exe",
-    "rpcss.exe", "winecfg.exe",
+    "rpcss.exe", "winecfg.exe", "wmic.exe",
 }
 LLVM_MINGW_PIN = {
     "release": "20260421",

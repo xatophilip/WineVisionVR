@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINE_TOOLS = {
     "wineboot.exe", "services.exe", "winedevice.exe", "explorer.exe",
     "conhost.exe", "rundll32.exe", "start.exe", "plugplay.exe", "ntoskrnl.exe",
-    "rpcss.exe", "winecfg.exe",
+    "rpcss.exe", "winecfg.exe", "wmic.exe",
 }
 REQUIRED_BUILTINS = {
     "ntdll.dll", "kernel32.dll", "kernelbase.dll", "wineboot.exe",

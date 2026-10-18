@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import subprocess
 import tarfile
 
@@ -20,6 +21,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--runtime-source', required=True, type=Path)
 p.add_argument('--build', required=True, type=Path)
 p.add_argument('--prefix-template', type=Path)
+p.add_argument('--resource-source', type=Path, help='Require live packaging verification against this freshly built Madeira farm')
 a = p.parse_args()
 a.build.mkdir(parents=True, exist_ok=True)
 wmic = (a.runtime_source/'wine/programs/wmic/main.c').read_text()
@@ -75,6 +77,36 @@ make() {
 '''+recipe[start:end]
 subprocess.run(['bash','-c',shell,'wmic-test',str(programs.resolve())],check=True)
 assert (programs/'farm/wmic.exe').read_bytes() == b'same-source:programs/wmic/arm64ec-windows/wmic.exe\n'
+
+# Exercise actual staging and ledger policy. The source-farm receipt remains
+# untouched: this verifies selection/copy behavior, not new build provenance.
+sys.path.insert(0,str(ROOT/'windows-vr-tools'))
+import stage_resources
+import resource_receipt
+assert 'wmic.exe' in stage_resources.WINE_TOOLS == resource_receipt.WINE_TOOLS
+assert stage_resources.packaged_builtin(Path('wmic.exe'),'arm64ec-windows')
+assert stage_resources.packaged_builtin(Path('WMIC.EXE'),'arm64ec-windows')
+assert not stage_resources.packaged_builtin(Path('unlisted-helper.exe'),'arm64ec-windows')
+assert stage_resources.packaged_builtin(Path('wbemprox.dll'),'arm64ec-windows')
+resources=a.resource_source or a.runtime_source/'app/Madeira'
+packaging={'policyVerified':True,'liveFreshPECopyVerified':False}
+if a.resource_source or (resources/'arm64ec-windows/wmic.exe').is_file():
+    for name in ['wmic.exe','wbemprox.dll']:
+        assert stage_resources.is_arm64ec_pe(resources/'arm64ec-windows'/name)
+    copied=a.build/'production-packaging';copied.mkdir()
+    stage_resources.copy_builtins(resources,copied)
+    ledger=resource_receipt.guest_resource_files(resources)
+    hashes={}
+    for name in ['wmic.exe','wbemprox.dll']:
+        relative='arm64ec-windows/'+name
+        expected=hashlib.sha256((resources/relative).read_bytes()).hexdigest()
+        assert hashlib.sha256((copied/relative).read_bytes()).hexdigest()==expected
+        assert ledger[relative]==expected
+        hashes[name]=expected
+    packaging.update(liveFreshPECopyVerified=True,resources=str(resources),copiedPEsSha256=hashes)
+    print('PASS: production copy_builtins and guest_resource_files preserve fresh WMIC/WBEM PEs; unlisted EC executables remain excluded')
+else:
+    print('SKIP: live PE packaging copy; pass --resource-source after the guest build')
 
 prelude = r'''
 #include <assert.h>
@@ -144,4 +176,4 @@ if prefix:
     print('PASS: existing prefix WbemLocator registration points at Wine wbemprox; no registry edit')
 else:
     print('SKIP: prefix registration verification; no --prefix-template or AVPPLAY_WINE_PREFIX_TEMPLATE')
-(a.build/'result.json').write_text(json.dumps({'passed':True,'scope':'Production WMIC alias and BIOS provider with mocked firmware/table boundaries; actual build target-copy loop with mocked make/strip; no Wine/COM/device execution','serialSemantics':'Unchanged upstream placeholder; not a physical serial','prefixLocatorRegistrationVerified':registration,'wmicSourceSha256':hashlib.sha256(wmic.encode()).hexdigest(),'providerSourceSha256':hashlib.sha256(provider.encode()).hexdigest(),'command':command},indent=2)+'\n')
+(a.build/'result.json').write_text(json.dumps({'passed':True,'productionPackaging':packaging,'scope':'Production staging/ledger policy and optional live PE copy; production WMIC alias and BIOS provider with mocked firmware/table boundaries; actual build target-copy loop with mocked make/strip; no Wine/COM/device execution','serialSemantics':'Unchanged upstream placeholder; not a physical serial','prefixLocatorRegistrationVerified':registration,'wmicSourceSha256':hashlib.sha256(wmic.encode()).hexdigest(),'providerSourceSha256':hashlib.sha256(provider.encode()).hexdigest(),'command':command},indent=2)+'\n')
