@@ -209,7 +209,10 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(!model.canLaunch)
-                        if model.canReturnToVR || model.isReturningToVR {
+                    }
+                    HStack(spacing: 12) {
+                        if model.canReturnToVR || model.isReturningToVR ||
+                            (model.hasAcceptedLaunch && model.presentationModeDraft == .immersiveVR) {
                             Button { Task { await returnToVR() } } label: {
                                 if model.isReturningToVR {
                                     ProgressView(L("Returning to VR…", "Rückkehr zu VR …"))
@@ -222,14 +225,14 @@ struct ContentView: View {
                             .disabled(!model.canReturnToVR)
                             .accessibilityIdentifier("return-to-vr")
                         }
-                        if model.hasAcceptedLaunch {
+                        if model.manifest != nil && model.hasAcceptedLaunch {
                             Button(role: .destructive) { Task { await model.stop() } } label: {
                                 Label(model.isStopping ? L("Stopping…", "Wird beendet …") : L("End session", "Sitzung beenden"), systemImage: "stop.fill")
                             }.disabled(model.isStopping || model.stopRequested)
                         }
-                    }
-                    if model.stopRequested || model.requiresRestart {
-                        ForceQuitSessionButton()
+                        if model.hasAcceptedLaunch || model.stopRequested || model.requiresRestart {
+                            ForceQuitSessionButton()
+                        }
                     }
                     if let error = model.launchError {
                         Label(error, systemImage: "exclamationmark.circle")
@@ -246,23 +249,25 @@ struct ContentView: View {
                 .padding(24)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
 
-                Button {
-                    do { try model.selectVRSmoke() }
-                    catch { model.presentLibraryError(error) }
-                } label: {
-                    Label(L("Built-in VR test scene", "Integrierte VR-Testszene"), systemImage: "cube.transparent")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!model.canChangeSelection)
+                HStack(spacing: 12) {
+                    Button {
+                        do { try model.selectVRSmoke() }
+                        catch { model.presentLibraryError(error) }
+                    } label: {
+                        Label(L("Built-in VR test scene", "Integrierte VR-Testszene"), systemImage: "cube.transparent")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.canChangeSelection)
 
-                Button {
-                    do { try model.selectDesktopDemo() }
-                    catch { model.presentLibraryError(error) }
-                } label: {
-                    Label(L("Windows desktop test", "Windows-Desktop-Test"), systemImage: "desktopcomputer")
+                    Button {
+                        do { try model.selectDesktopDemo() }
+                        catch { model.presentLibraryError(error) }
+                    } label: {
+                        Label(L("Windows desktop test", "Windows-Desktop-Test"), systemImage: "desktopcomputer")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.canChangeSelection)
                 }
-                .buttonStyle(.bordered)
-                .disabled(!model.canChangeSelection)
 
                 Button {
                     SteamLibraryModel.shared.resumeAfterLaunchFailure()
