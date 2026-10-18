@@ -1,5 +1,48 @@
 # Windows VR implementation status
 
+## Latest signed package: launcher action rows (2026-10-18)
+
+The r10 main app built from `e8572e69692560d4b62063977c8955681be251f0`,
+passed the strict signing/package audit, installed and opened successfully.
+Session actions now share one row (Return to VR, End session, Force quit app),
+and the built-in VR and Windows desktop tests share another. Force quit is also
+available during an accepted session, with its existing confirmation dialog.
+The existing Return-to-VR lifecycle contract passes after this layout change.
+Physical layout acceptance and game reentry in r10 have not been reported.
+
+This remains an app-only build using the exact verified r7 native/guest/AIR
+inputs; it includes no new Lab, USD or atomic runtime fix. App UUID:
+`33FFABB9-8754-35D1-B470-EDA513555E59`; linked plugin UUID:
+`2F4EE552-3761-32F5-890C-04EB6CDF066C`. Evidence is in
+`/Volumes/XRDev/build/WineVisionVR/launcher-rows-oct18-r10`:
+`verified-app-complete.json`, `validation/result.json`, `device-install.json`,
+`launcher-launch.json` and `return-contract/result.json`.
+The first build ran out of internal temporary disk space during Info.plist
+processing. Its original log is preserved as
+`logs/build-signed-main-initial-enospc.log`; `build-retry-record.json` binds it
+to the successful incremental retry. No source or validation guard was bypassed.
+Subagents recovered approximately 89.6 MiB from inactive regenerable caches;
+source, games, evidence, signing and device records were preserved.
+
+## The Lab: confirmed swapchain size rejection (2026-10-18)
+
+The fresh r9 run (native PID 732, Steam app 450390) submits two stereo frames.
+OpenComposite initially creates 3840×1792 source textures, then the game requests
+5372×2507 at 15:10:21.678. The current runtime allows at most 3840×3584 for the
+observed 1920×1792 guest eyes, so the later width is rejected with
+`XR_ERROR_SWAPCHAIN_RECT_INVALID (-25)`. The error is logged at 15:10:21.725,
+before the user's explicit stop at 15:10:23.239. A missing DLL or native-process
+crash is not established as its cause. The left controller is disconnected in
+this snapshot; no two-controller gameplay result is claimed.
+
+The next runtime change needs to support appropriate wider double-wide source
+textures while respecting advertised limits and the memory budget, with a
+regression for the exact failing dimensions. Silently clamping the descriptor
+would break source-copy and submitted-rectangle semantics. This is a diagnosis,
+not a deployed fix. Successful native/launcher/OpenComposite copies and their
+hashes are bound in `launcher-rows-oct18-r10/lab-errors-review.json` under the
+external build root.
+
 ## Return to an existing VR session (2026-10-18)
 
 An ordinary immersive-space closure previously called native stop and required
@@ -48,7 +91,7 @@ successful copy receipts; the offline review is
 `reentry-oct18-r9/recent-r8-errors-review.json`.
 Audioshield's separate repeat-fault termination below remains a confirmed failure.
 
-## Latest signed package: Return to VR (2026-10-18)
+## Previous signed package: Return to VR (2026-10-18)
 
 The r9 main app built and passed signing/package validation from app source
 `67dee54800d3474e9ba5c880dee014a6e11212f0`. It compiles the Return to VR,
