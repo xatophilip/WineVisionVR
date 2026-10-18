@@ -64,3 +64,32 @@ fresh builds use the corrected normal staging policy directly.
 
 These checks prove packaging and provenance. They do not prove headset COM/WQL
 query execution or successful Tilt Brush loading.
+
+## Actual local COM query control — 18 October 2026
+
+A separate APFS clone of the validated local Mac Wine build executed the real
+Win64 `wmic.exe bios get serialnumber`, using normal stock WbemLocator COM
+registration, `ROOT\CIMV2`, and the actual `SELECT serialnumber FROM Win32_BIOS`
+provider path. It exited 0 and returned `SerialNumber` / `Serial number`. The
+value remains Wine's upstream placeholder, **not a physical hardware identifier**.
+No provider, firmware or query boundary was mocked. The checked WMIC/provider
+sources are byte-identical to the prepared r5 sources.
+
+The scratch build added same-source WMIC, wbemprox, winspool and compstui targets
+with at most two jobs. A first activation failed because compstui was absent;
+that attempt is retained alongside the successful second fresh-prefix query.
+Both prefixes used the verified stock registry template; fresh prefix bootstrap
+was not tested. All 5,022 baseline validated-host build files and checked source
+files remained unchanged. No user prefix or device was involved.
+
+All 30 local eager PE provider names are present in the final r5 ARM64EC
+62-provider closure, including `winspool.drv` and `compstui.dll`; all 62 packaged
+files match their recorded hashes. No missing EC PE provider was found. Mac
+native/Unix backends differ from visionOS, so this result does not establish
+headset COM activation, other WMI queries, or game acceptance.
+
+The external evidence is
+`/Volumes/XRDev/build/WineVisionVR/local-wmic-oct18/actual-wmic-query-receipt.json`,
+with raw failed/successful attempts and `final-r5-provider-comparison.json`
+alongside it. This documentation follow-up is separate from the frozen r6 app
+source snapshot `9c5e214`; it changes no app or runtime build inputs.
