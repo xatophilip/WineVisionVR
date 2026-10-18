@@ -2,6 +2,11 @@
 
 ## Stock 32-bit crypto defaults repair (2026-10-18)
 
+A subsequent user reply reports Tilt Brush as blank, loading or closed despite
+an earlier log reaching its painting state. That delayed reply is not tied to
+a new build identity; painting-state logs alone are not visual acceptance.
+
+
 Audioshield's later random-source failure is traced to missing 32-bit stock CSP
 registry defaults in the shared win64 prefix. The production pre-start helper
 adds the pinned stock entries only when the entire 32-bit defaults subtree is
@@ -24,11 +29,13 @@ that whole attempt is retained, and r15b starts in a fresh sealed output folder.
 `prefix-csp-oct18-r15b/verified-app-complete.json` has SHA-256
 `d165bb4cf5268ccfebaa2263648ac5ca27cbd23dda98e05cf104ccc916b0b171`.
 App UUID is `D944CC52-D4CA-3266-A165-D630F52900AB`; plugin UUID is
-`A978C539-3048-364A-81CB-BC4D855B5E5D`. Physical installation/launch and
-Audioshield startup remain pending; the first install connection was interrupted
-while the headset reported locked. A subsequent device listing still points to
-the previous installed bundle, so deployment is not claimed successful. No reset
-or uninstall was performed. Independent full-package review is retained at
+`A978C539-3048-364A-81CB-BC4D855B5E5D`. The first install connection was
+interrupted while the headset reported locked. After restarting only the Mac's
+per-user CoreDevice service, retry installation succeeds into bundle container
+`0EADA1FD-3DFB-48E8-880C-D0514587B3C4`. The direct Audioshield launch times out;
+the following process query finds no WineVision process, and lock state still
+reports passcode required. Device migration execution and Audioshield gameplay
+remain unverified. No reset or uninstall was performed. Independent full-package review is retained at
 `crypto-provider-oct18/independent-review/r15b-final-package-review.json`, SHA-256
 `25608c2f2ccaa62165568d7a79b2aea3064577e4a3e68efbb4b602626ca6561e`.
 
