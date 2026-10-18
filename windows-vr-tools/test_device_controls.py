@@ -28,6 +28,8 @@ FINAL = dict(fixture='mixed-architecture-child-v1', pointerBits=32, callbacks=1,
              contextI386=1, contextStackValid=1, exceptionValid=1, continuedAfterRaise=1, exitCode=0)
 PARENT_PASS = ('PASS: x64 parent -> i386 child, RtlRunOnce callback once, VEH once, '
                'i386 context/stack, resumed after RaiseException, fresh markers, child exit 0')
+LAUNCHER_ARCHIVES = tuple(f'launcher.previous-{n}.txt' for n in (3, 2, 1))
+MAX_LAUNCHER_BYTES = 8 * 1024 * 1024
 BEFORE = dict(fixture='mixed-architecture-child-v1', stage='beforeRaiseException',
               pointerBits=32, callbacks=1, exceptionCode=0xe0425648)
 
@@ -303,6 +305,31 @@ class Controls:
                 result[key] = path.read_text(errors='replace')
         return result
 
+    def archived_launcher(self, logs, directory, deadline, prior, started):
+        # LaunchLog.swift rotates three slots, oldest first. Never consume an
+        # old slot merely because its contents contain a plausible JIT message.
+        before = self.listing('Documents', deadline, 'launcher-archive-before')
+        names = [n for n in (*LAUNCHER_ARCHIVES, 'launcher-log.txt')
+                 if fresh(before.get(n), prior.get(n), started, self.clock.time(), self.c.clock_skew)]
+        if 'launcher-log.txt' not in names or not any(n in names for n in LAUNCHER_ARCHIVES):
+            return logs
+        chunks = []
+        for name in names:
+            size = before[name]['metadata']['size']
+            if type(size) is not int or not 0 < size <= MAX_LAUNCHER_BYTES:
+                return logs
+            path = directory / name
+            if not self.copy('Documents/'+name, path, deadline, 'launcher-archive-copy', optional=True):
+                return logs
+            if path.stat().st_size != size:
+                return logs
+            chunks.append(path.read_text(errors='replace'))
+        after = self.listing('Documents', deadline, 'launcher-archive-after')
+        if any(after.get(n) != before[n] for n in names):
+            return logs
+        save(directory/'launcher-archive-metadata.json', {n: before[n] for n in names})
+        return dict(logs, launcher='\n'.join(chunks), launcherArchives={n: before[n] for n in names})
+
     def proof(self, logs, pid, variant):
         runtime, launcher = logs.get('runtime', ''), logs.get('launcher', '')
         identities = list(re.finditer(r'ml989: running image (.+?) base=0x[0-9a-fA-F]+ pid=(\d+) LC_UUID=([0-9A-Fa-f-]+)', runtime))
@@ -316,6 +343,9 @@ class Controls:
         if not matches:
             return None
         tail = launcher[matches[-1].end():]
+        # Unlabelled attach/accept lines belong only to this handoff, never a
+        # subsequent launch reconstructed from another rotated file.
+        tail = re.split(r'JIT: handed the script to (?:stikdebug|stikjit) for pid ', tail, maxsplit=1)[0]
         attached, accepted = tail.find('JIT: debugger attached after '), tail.find('Launch: runtime accepted the launch')
         if attached < 0 or accepted < attached:
             return None
@@ -330,6 +360,7 @@ class Controls:
         if variant == 'mixed' and not parent_verified:
             return None
         return dict(nativePID=pid, runtimePluginUUID=self.identity['pluginUUID'], wineExitCode=0,
+                    launcherProofFiles=list(logs.get('launcherArchives', {'launcher-log.txt': None})),
                     parentWaitAndExitVerified=parent_verified if variant == 'mixed' else None) if exits else None
 
     def phase(self, variant, folder, marker):
@@ -370,6 +401,9 @@ class Controls:
             current = self.listing(subdir, deadline, variant+'-files')
             logs = self.logs(capture, deadline)
             proof = self.proof(logs, pid, variant)
+            if not proof and f'pid={pid} LC_UUID=' in logs.get('runtime', ''):
+                logs = self.archived_launcher(logs, capture, deadline, prior_logs, started)
+                proof = self.proof(logs, pid, variant)
             names = (marker+'.before-seh.json', marker)
             if proof and all(fresh(current.get(n), prior.get(n), started, self.clock.time(), self.c.clock_skew) for n in names):
                 for n in (*names, 'child32.exe', *(['parent64.exe'] if variant == 'mixed' else [])):
@@ -379,7 +413,8 @@ class Controls:
                 documents = self.listing('Documents', deadline, variant+'-logs-metadata')
                 logs_fresh = all(fresh(documents.get(n), prior_logs.get(n), started, self.clock.time(), self.c.clock_skew)
                                  for n in ('launcher-log.txt', 'madeira-log.txt'))
-                if stable and logs_fresh:
+                archives_stable = all(documents.get(n) == metadata for n, metadata in logs.get('launcherArchives', {}).items())
+                if stable and logs_fresh and archives_stable:
                     if not exact_marker(capture/names[0], BEFORE) or not exact_marker(capture/names[1], FINAL):
                         raise ControlError('Fresh fixture marker reports invalid/incomplete SEH result')
                     for n in ('child32.exe', *(['parent64.exe'] if variant == 'mixed' else [])):

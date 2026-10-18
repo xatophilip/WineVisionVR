@@ -91,7 +91,17 @@ class FakeDevice:
 
     def log(self, name):
         if self.variant is None: return b'prior session\n'
-        if name == 'launcher-log.txt':
+        if name in ('launcher-log.txt', *m.LAUNCHER_ARCHIVES):
+            handoff=f'12:00:00 [notice] JIT: handed the script to stikdebug for pid {self.pid}; waiting for a debugger\n'
+            attached='12:00:01 [notice] JIT: debugger attached after 1 seconds\n'
+            accepted='12:00:01 [notice] Launch: runtime accepted the launch\n'
+            if self.mode in ('rotation','stale-archive','rotation-other-pid','archive-changed'):
+                if name=='launcher-log.txt':return accepted.encode()
+                if name=='launcher.previous-1.txt':
+                    extra=('12:00:00 [notice] JIT: handed the script to stikdebug for pid 777; waiting for a debugger\n'
+                           if self.mode=='rotation-other-pid' else '')
+                    return (('prior game log\n'*150000)+handoff+extra+attached).encode()
+                return b'old unrelated archive\n'
             return (f'12:00:00 [notice] JIT: handed the script to stikdebug for pid {self.pid}; waiting for a debugger\n'
                     '12:00:01 [notice] JIT: debugger attached after 1 seconds\n'
                     '12:00:01 [notice] Launch: runtime accepted the launch\n').encode()
@@ -156,8 +166,13 @@ class FakeDevice:
                 self.disconnected = True
                 outcome, code = 'failure', 1
             elif subdir == 'Documents':
-                result = dict(files=[self.row(n, self.log(n), old=self.variant is None or self.mode == 'stale-logs')
-                                     for n in ('launcher-log.txt', 'madeira-log.txt')])
+                names=['launcher-log.txt','madeira-log.txt']
+                if self.mode in ('rotation','stale-archive','rotation-other-pid','archive-changed'):names.extend(m.LAUNCHER_ARCHIVES)
+                result = dict(files=[self.row(n, self.log(n), old=self.variant is None or self.mode == 'stale-logs' or
+                                              n in m.LAUNCHER_ARCHIVES and (n!='launcher.previous-1.txt' or self.mode=='stale-archive'))
+                                     for n in names])
+                if self.mode=='archive-changed' and tag=='launcher-archive-after':
+                    next(r for r in result['files'] if r['name']=='launcher.previous-1.txt')['metadata']['size']+=1
             else:
                 variant = 'direct' if subdir.endswith('DirectChildControl') else 'mixed'
                 marker = 'direct-child-result.json' if variant == 'direct' else 'mixed-child-result.json'
@@ -169,7 +184,7 @@ class FakeDevice:
             assert arguments[arguments.index('--domain-identifier')+1] == m.BUNDLE
             source = arguments[arguments.index('--source')+1]
             destination = Path(arguments[arguments.index('--destination')+1])
-            if source in ('Documents/launcher-log.txt', 'Documents/madeira-log.txt'):
+            if source in tuple('Documents/'+n for n in ('launcher-log.txt','madeira-log.txt',*m.LAUNCHER_ARCHIVES)):
                 data = self.log(Path(source).name)
             elif source.endswith('.exe'):
                 data = (self.app/'MixedArchitectureChild'/self.variant/Path(source).name).read_bytes()
@@ -219,6 +234,9 @@ def case(build, mode, expected):
         else:assert len(fake.launches) <= 1, 'Direct failure must prevent mixed launch'
     if mode in ('timeout-started','cli-timeout-started'):
         assert all(p['launchCommandTimedOut'] for p in report['phases'])
+    if mode=='rotation':
+        assert all(list((output/p).glob('capture-*/launcher.previous-1.txt')) for p in ('direct','mixed'))
+        assert all(p['proof']['launcherProofFiles']==['launcher.previous-1.txt','launcher-log.txt'] for p in report['phases'])
     if mode == 'locked': assert not fake.launches
     if mode == 'disconnect': assert controls.transport_failed and fake.pid is not None
     assert any((output/'raw').iterdir())
@@ -330,7 +348,8 @@ def main():
     if a.cli_help: cli_help_contract(build)
     transport_contract(build)
     m.verify_local_signature=lambda app,tmpdir=None:dict(scope='deterministic fake signing boundary',returnCode=0)
-    for mode, expected in [('success', True), ('unlock-later', True), ('stale', False),
+    for mode, expected in [('success', True), ('unlock-later', True), ('rotation',True),
+                           ('stale-archive',False),('rotation-other-pid',False),('archive-changed',False),('stale', False),
                            ('stale-logs', False), ('stale-exit', False), ('timeout-started', True),
                            ('cli-timeout-started',True),('cli-invalid-arguments',False),('child-only-exit',False),('mutated-resource',False), ('timeout-no-start', False),
                            ('disconnect', False), ('locked', False), ('wrong-uuid', False),
