@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import plistlib
@@ -86,17 +87,25 @@ class Devicectl:
         self.env = {k: v for k, v in self.env.items() if not k.startswith('DEVICECTL_CHILD_')}
 
     def call(self, arguments, tag, timeout, trailing=()):
+        # devicectl accepts integer seconds, whereas phase budgets are fractional.
+        # Never round up or add host grace beyond the caller's remaining budget.
+        if not math.isfinite(timeout) or timeout < 1:
+            raise ControlError('Less than one second remains for devicectl')
+        deadline = time.monotonic() + timeout
         self.sequence += 1
         stem = self.output / 'raw' / f'{self.sequence:04d}-{tag}'
         target = stem.with_suffix('.json')
-        command = ['xcrun', 'devicectl', *arguments, '--timeout', str(timeout),
+        command = ['xcrun', 'devicectl', *arguments, '--timeout', str(math.floor(timeout)),
                    '--json-output', str(target), *trailing]
         started = time.time()
         timed_out, code, host_error = False, None, None
         with stem.with_suffix('.stdout').open('wb') as out, stem.with_suffix('.stderr').open('wb') as err:
             try:
+                remaining = deadline - time.monotonic()
+                if remaining < 1:
+                    raise ControlError('Less than one second remains for devicectl')
                 code = subprocess.run(command, env=self.env, stdout=out, stderr=err,
-                                      timeout=timeout + 1, check=False).returncode
+                                      timeout=remaining, check=False).returncode
             except subprocess.TimeoutExpired:
                 # Only the host command is stopped; never blindly repeat launch.
                 timed_out, code = True, -1
@@ -252,8 +261,8 @@ class Controls:
 
     def call(self, args, tag, deadline, trailing=(), missing=False, launch=False):
         remaining = deadline - self.clock.monotonic()
-        if remaining <= 0:
-            raise ControlError('Phase deadline reached')
+        if remaining < 1:
+            raise ControlError('Less than one second remains before phase deadline')
         result = self.boundary.call(['device', *args, '--device', self.c.device], tag,
                                    min(self.c.command_timeout, remaining), trailing)
         if result.success or (missing and missing_file(result.document)) or (launch and result.timeout):

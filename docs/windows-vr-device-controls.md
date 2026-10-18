@@ -14,6 +14,8 @@ python3 windows-vr-tools/test_device_controls.py \
   --unlock-timeout 180 --phase-timeout 120
 ```
 
+`--command-timeout` accepts fractional host budgets, but devicectl receives positive integer seconds rounded down. The host deadline has no added grace; a phase with less than one second remaining stops without another device command.
+
 The output directory must be new and on an external `/Volumes` volume; its `tmp` directory becomes the host command's `TMPDIR`. The package receipt is an explicit path and must identify the diagnostic WineVision app, a verified signature and the matching executable SHA. Before any device action the runner performs bounded local deep/strict signature verification and, when supplied, compares every package file against the SHA-bound complete audit ledger. The installation receipt must identify the same device and bundle. Local app/executable/plugin UUIDs, a complete package hash ledger and fixture PE hashes are recorded. The installed bundle URL, actual launch PID and runtime plugin UUID bind device observations to that selected package; the runner does not claim a remotely calculated whole-app hash.
 
 Each phase launches only `com.philipanderson.WineVisionVR`, with `--terminate-existing --activate` and the existing diagnostic arguments. The app requests its normal StikDebug JIT helper. A launch command timeout is preserved and may be recovered by finding one new process with the exact installed executable; launch is never blindly repeated. This also handles the CLI’s failed/code2 result only when its preserved stderr contains the exact command-timeout message; generic argument failures are not treated as timeouts.
@@ -28,5 +30,7 @@ Development tests execute the actual orchestrator and transport logic against de
 python3 windows-vr-tools/tests/test_device_controls.py \
   --build /Volumes/XRDev/build/WineVisionVR/device-controls-contract
 ```
+
+Add `--cli-help` to the development test command to verify the installed CLI accepts integer timeout tokens and rejects `20.0`, using only `devicectl --help` with no device selection.
 
 The host tool and documentation can change independently of the frozen runtime/app build. Passing fake tests establishes runner behavior, not headset/runtime success.

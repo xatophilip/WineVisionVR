@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the production host orchestrator against a deterministic fake device.
-No devicectl, debugger, headset, Wine, credentials, or real app is accessed.
+No debugger, headset, Wine, credentials, or real app is accessed.
+Optional --cli-help checks only the installed devicectl argument parser.
 """
 import argparse
 from datetime import datetime, timezone
@@ -237,7 +238,8 @@ def transport_contract(build):
             assert command[:2]==['xcrun','devicectl']
             assert command.index('--json-output')<command.index(m.BUNDLE)
             assert command.index('--timeout')<command.index(m.BUNDLE)
-            assert kwargs['timeout']==4
+            assert command[command.index('--timeout')+1]=='3'
+            assert 0 < kwargs['timeout'] <= 3
             assert kwargs['env']['TMPDIR']==str(output/'tmp')
             assert not any(k.startswith('DEVICECTL_CHILD_') for k in kwargs['env'])
             m.save(Path(command[command.index('--json-output')+1]),dict(info=dict(outcome='success'),result={}))
@@ -245,6 +247,35 @@ def transport_contract(build):
         m.subprocess.run=success
         result=boundary.call(['device','process','launch','--device',DEVICE],'launch',3,[m.BUNDLE,'--mixed-architecture-child-test'])
         assert result.success
+        budgets=[]
+        def integer_timeout(command,**kwargs):
+            token=command[command.index('--timeout')+1]
+            assert token.isdecimal() and int(token)>0
+            # A real devicectl parser rejects '20.0' before producing JSON.
+            assert int(token)==budgets[-1][0]
+            assert 0 < kwargs['timeout'] <= budgets[-1][1]
+            m.save(Path(command[command.index('--json-output')+1]),dict(info=dict(outcome='success'),result={}))
+            return SimpleNamespace(returncode=0)
+        m.subprocess.run=integer_timeout
+        budgets.append((20,20.0))
+        assert boundary.call(['device','info','lockState','--device',DEVICE],'float-config',20.0).success
+        # Exercise the actual orchestrator's min(config, fractional phase remainder).
+        controls=object.__new__(m.Controls)
+        controls.c=SimpleNamespace(device=DEVICE,command_timeout=20.0)
+        controls.clock=Clock()
+        controls.boundary=boundary
+        controls.transport_failed=False
+        budgets.append((2,2.9))
+        assert controls.call(['info','lockState'],'fractional-remainder',2.9).success
+        sequence=boundary.sequence
+        for budget in (0.99,0,-1,float('inf'),float('nan')):
+            try:boundary.call(['device','info','lockState','--device',DEVICE],'expired',budget)
+            except m.ControlError:pass
+            else:raise AssertionError('Invalid/subsecond budget issued a device command')
+        try:controls.call(['info','lockState'],'expired-phase',0.99)
+        except m.ControlError:pass
+        else:raise AssertionError('Subsecond phase issued a device command')
+        assert boundary.sequence==sequence
         def timeout(command,**kwargs): raise subprocess.TimeoutExpired(command,kwargs['timeout'])
         m.subprocess.run=timeout
         result=boundary.call(['device','info','lockState','--device',DEVICE],'timeout',3)
@@ -267,7 +298,7 @@ def transport_contract(build):
         m.subprocess.run=missing
         result=boundary.call(['device','info','lockState','--device',DEVICE],'missing',3)
         assert not result.success and result.document['error']['domain']=='HostOSError'
-        assert len(list((output/'raw').glob('*.command.json')))==5
+        assert len(list((output/'raw').glob('*.command.json')))==7
     finally:
         m.subprocess.run=original
         if old is None:os.environ.pop('DEVICECTL_CHILD_PRIVATE',None)
@@ -275,12 +306,28 @@ def transport_contract(build):
     print('PASS production transport: exact argv, bounded timeout, externalTMPDIR, launch env isolation and raw failure records')
 
 
+def cli_help_contract(build):
+    # --help exits in the argument parser; no device is named or queried.
+    for token, expected in (('20',0),('2',0),('20.0',64)):
+        command=['xcrun','devicectl','--timeout',token,'--help']
+        result=subprocess.run(command,capture_output=True,text=True,timeout=10,check=False)
+        m.save(build/('cli-help-'+token+'.json'),dict(command=command,returnCode=result.returncode,
+               stdout=result.stdout,stderr=result.stderr))
+        assert result.returncode==expected, (command,result.returncode,result.stderr)
+        text=result.stdout+result.stderr
+        assert '--timeout <seconds>' in text
+        if expected:assert "The value '20.0' is invalid" in text
+    print('PASS real devicectl --help parser only: integer seconds accepted; float token rejected')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--build', required=True, type=Path)
+    p.add_argument('--cli-help', action='store_true', help='Check real local devicectl --help parsing only; no device calls')
     a = p.parse_args()
     a.build.mkdir(parents=True, exist_ok=True)
     build = Path(tempfile.mkdtemp(prefix='device-controls-contract-', dir=a.build.resolve()))
+    if a.cli_help: cli_help_contract(build)
     transport_contract(build)
     m.verify_local_signature=lambda app,tmpdir=None:dict(scope='deterministic fake signing boundary',returnCode=0)
     for mode, expected in [('success', True), ('unlock-later', True), ('stale', False),
