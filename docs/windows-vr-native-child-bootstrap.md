@@ -55,4 +55,16 @@ Local evidence remains outside the repository:
 - The same r6 directory's `validation/native-child-bootstrap-fresh-runtime/native-child-bnbmlhro/contract-receipt.json` records the actual-source/real-PE 0016 checks.
 - `/Volumes/XRDev/build/WineVisionVR/final-r6-local-controls-oct18/final-six-local-result.json` records all six executions; `final-audit-link.json` binds them to the complete artifact receipt and app-file ledger.
 
-The r6 app is installed, but at this verification update the automatic headset runner is waiting for the locked headset to be unlocked. Fresh r6 headset direct and mixed SEH results, including handled exception and continuation, remain pending; game compatibility and rendering results also remain pending. Existing broader pseudo-process globals and concurrent child limits remain outside this fix.
+The installed r6 visionOS runtime also passed both owned headset controls on 18 October 2026: direct i386 in native PID 1341 and x64-parent-to-i386-child in PID 1346, each bound to runtime plugin UUID `3350D264-EBA8-3598-8DE2-57E8902DEF87`. The recovered direct before/final markers were fresh at 12:16:52 UTC, after its 12:16:36 UTC launch; the mixed markers were fresh at 12:19:00 UTC, after its 12:18:45 UTC launch. Both copies of the child match the exact packaged SHA-256 `d1a4e7e0a87de99e95d280e29aed5ec3452e10c686cdb6b5cd4a65e6c09a01bc`. Both final results report one callback, one vectored handler, `contextFlags=65599`, valid i386 context/stack/exception, continuation after the raise, and exit zero.
+
+The mixed runtime log records the private native-child ntdll mapped with machine `0xaa64`. It then records `CHILD_EXIT code=0 beforeStage=1`, the x64 parent's complete PASS, and Wine exit zero. This verifies the previously failing mixed child bootstrap and owned SEH/continuation path on the headset.
+
+The automatic runner originally stopped while copying evidence: CoreDevice error 7000 with nested POSIX error 60 interrupted the direct runtime-log transfer and the mixed launcher-log transfer. Manual recovery collected evidence from those same completed launches without relaunching either control; the original failed runner results and raw transfer errors remain preserved. The direct recovery combines the rotated launcher archive with the captured current log. Recovery receipts verify marker freshness, stable metadata, exact packaged PE hashes and runtime identity rather than treating the failed transfers as successful automatic runs.
+
+Additional external evidence in `/Volumes/XRDev/build/WineVisionVR/child-loader-oct18-r6`:
+
+- `direct-recovery/verified-direct-result.json` and `mixed-recovery/verified-mixed-result.json` bind the recovered logs, before/final markers, executable hashes and original runner failures.
+- `device-controls-run-3/result.json` and `mixed-only-run-1/result.json`, with their `raw/` directories, preserve the automatic transfer failures.
+- `deployment-summary.json` links the installed artifact, six local controls and recovered headset results.
+
+These owned controls do not establish game compatibility or rendering success; those results remain pending. Existing broader pseudo-process globals and concurrent child limits remain outside this fix.
