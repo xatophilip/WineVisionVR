@@ -74,7 +74,8 @@ struct ContentView: View {
                 do {
                     setenv("MADEIRA_DUMP_SURFACES", "1", 1)
                     try model.selectDesktopDemo(architecture: ProcessInfo.processInfo.arguments.contains("--x86-guest") ? .x86 : nil)
-                    model.launchArgumentsText = "[\"--self-test\"]"
+                    model.launchArgumentsText = ProcessInfo.processInfo.arguments.contains("--trace-input")
+                        ? "[\"--self-test\",\"--trace-input\"]" : "[\"--self-test\"]"
                     await startLaunch()
                 } catch { model.presentLibraryError(error) }
             } else if LaunchDiagnostics.enabled, !didStartDesktopSmokeTest,

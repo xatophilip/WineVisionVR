@@ -56,6 +56,34 @@ static void trace_input_callback(const char *stage, HWND window, UINT event,
     trace_input_message(stage, &msg, result);
 }
 
+static void trace_input_ancestry(const char *name, HWND window) {
+    if (!trace_input) return;
+    HWND ancestors[3];
+    DWORD errors[3];
+    const UINT kinds[3] = { GA_PARENT, GA_ROOT, GA_ROOTOWNER };
+    for (unsigned index = 0; index < 3; ++index) {
+        SetLastError(0);
+        ancestors[index] = GetAncestor(window, kinds[index]);
+        errors[index] = ancestors[index] ? 0 : GetLastError();
+    }
+    char line[280];
+    snprintf(line, sizeof(line),
+        "ancestry %s hwnd=%p GA_PARENT=%p err=%lu GA_ROOT=%p err=%lu GA_ROOTOWNER=%p err=%lu desktop=%p active=%p",
+        name, window, ancestors[0], (unsigned long)errors[0],
+        ancestors[1], (unsigned long)errors[1], ancestors[2], (unsigned long)errors[2],
+        GetDesktopWindow(), GetActiveWindow());
+    trace(line);
+    HWND current = window;
+    for (unsigned depth = 0; current && depth < 8; ++depth) {
+        HWND parent = GetParent(current);
+        snprintf(line, sizeof(line), "ancestry %s GetParent[%u] hwnd=%p parent=%p",
+            name, depth, current, parent);
+        trace(line);
+        if (parent == current) { trace("ancestry self-parent cycle"); break; }
+        current = parent;
+    }
+}
+
 static LRESULT CALLBACK button_proc(HWND window, UINT event, WPARAM wparam, LPARAM lparam) {
     trace_input_callback("button-before", window, event, wparam, lparam, 0);
     if ((event >= WM_MOUSEFIRST && event <= WM_MOUSELAST && event != WM_MOUSEMOVE) ||
@@ -257,6 +285,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     ShowWindow(window, show);
     trace(SetForegroundWindow(window) ? "foreground request succeeded" : "foreground request failed");
     SetFocus(editor);
+    trace_input_ancestry("root", window);
+    trace_input_ancestry("button", GetDlgItem(window, BUTTON_COUNT));
+    trace_input_ancestry("editor", editor);
     if (wcsstr(command_line, L"--self-test")) SetTimer(window, 1, 2000, NULL);
     MSG msg;
     int result;
