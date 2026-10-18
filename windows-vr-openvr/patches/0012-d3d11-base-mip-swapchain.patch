@@ -1,0 +1,74 @@
+--- a/OpenOVR/Compositor/dx11compositor.cpp
++++ b/OpenOVR/Compositor/dx11compositor.cpp
+@@ -9,6 +9,7 @@
+ #include "../Misc/xr_ext.h"
+ 
+ #include <cmath>
++#include <atomic>
+ #include "WindowsVRDepthProjection.h"
+ #include <d3dcompiler.h> // For compiling shaders! D3DCompile
+ 
+@@ -524,10 +525,19 @@
+ 		desc.width = srcDesc.Width;
+ 		desc.height = srcDesc.Height;
+ 		desc.format = type;
+-		desc.mipCount = srcDesc.MipLevels;
++		// OpenVR submits mip zero; extra source levels are not OpenXR images.
++		// Retain the existing cubemap request until that separate path is supported.
++		desc.mipCount = cube ? srcDesc.MipLevels : 1;
+ 		desc.sampleCount = 1;
+ 		desc.arraySize = 1;
+ 		desc.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
++
++		static std::atomic<uint32_t> requestLogs{};
++		if (requestLogs.fetch_add(1, std::memory_order_relaxed) < 16)
++			OOVR_LOGF("DX11 swapchain request: sourceMips=%u sourceArray=%u sourceSamples=%u destMips=%u faces=%u format=%lld size=%ux%u usage=0x%llx",
++			    fullSource.MipLevels, fullSource.ArraySize, fullSource.SampleDesc.Count,
++			    desc.mipCount, desc.faceCount, static_cast<long long>(desc.format),
++			    desc.width, desc.height, static_cast<unsigned long long>(desc.usageFlags));
+ 
+ 		XrResult result = xrCreateSwapchain(xr_session.get(), &desc, &chain);
+ 		if (!XR_SUCCEEDED(result))
+@@ -632,7 +642,7 @@
+ 		const UINT eyeSlice = srcDesc.ArraySize > 1 && eye.has_value() ? static_cast<UINT>(*eye) : 0;
+ 		if (srcDesc.SampleDesc.Count > 1 || srcDesc.ArraySize > 1) {
+ 			sampleTexture = resolvedMSAATextures[currentIndex];
+-			const UINT sourceSubresource = D3D11CalcSubresource(0, eyeSlice, srcDesc.MipLevels);
++			const UINT sourceSubresource = D3D11CalcSubresource(0, eyeSlice, std::max(1u, srcDesc.MipLevels));
+ 			if (srcDesc.SampleDesc.Count > 1)
+ 				context->ResolveSubresource(sampleTexture, 0, src, sourceSubresource, static_cast<DXGI_FORMAT>(createInfo.format));
+ 			else
+@@ -669,14 +679,15 @@
+ 		commands->Release();
+ 	} else {
+ 		// Apparently SteamVR supports apps just sending array textures without specifying what's what.
+-		const int arrayIndex = (srcDesc.ArraySize > 1 && eye.has_value()) ? static_cast<int>(*eye) : 0;
++		const UINT arrayIndex = (srcDesc.ArraySize > 1 && eye.has_value()) ? static_cast<UINT>(*eye) : 0;
++		const UINT sourceSubresource = D3D11CalcSubresource(0, arrayIndex, std::max(1u, srcDesc.MipLevels));
+ 		if (srcDesc.SampleDesc.Count > 1) {
+ 			D3D11_TEXTURE2D_DESC resDesc = srcDesc;
+ 			resDesc.SampleDesc.Count = 1;
+-			context->ResolveSubresource(resolvedMSAATextures[currentIndex], 0, src, arrayIndex, resDesc.Format);
++			context->ResolveSubresource(resolvedMSAATextures[currentIndex], 0, src, sourceSubresource, resDesc.Format);
+ 			context->CopySubresourceRegion(imagesHandles[currentIndex].texture, 0, 0, 0, 0, resolvedMSAATextures[currentIndex], 0, &sourceRegion);
+ 		} else {
+-			context->CopySubresourceRegion(imagesHandles[currentIndex].texture, 0, 0, 0, 0, src, arrayIndex, &sourceRegion);
++			context->CopySubresourceRegion(imagesHandles[currentIndex].texture, 0, 0, 0, 0, src, sourceSubresource, &sourceRegion);
+ 		}
+ 	}
+ 
+@@ -742,7 +753,13 @@
+ 
+ 	CHECK(Width, width)
+ 	CHECK(Height, height)
+-	CHECK(MipLevels, mipCount)
++	// Full source shape (including mip levels) is compared by the caller.
++	// A regular OpenVR image always has a one-level destination.
++	if (createInfo.faceCount != 1) {
++		CHECK(MipLevels, mipCount)
++	} else if (createInfo.mipCount != 1) {
++		FAIL(MipLevels)
++	}
+ 
+ 	if (inputDesc.Format != createInfoFormat) {
+ 		FAIL("Format");

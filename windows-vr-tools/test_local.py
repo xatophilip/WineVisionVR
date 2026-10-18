@@ -265,6 +265,9 @@ def main():
         skip('wow64-vr-pointers', '--dxmt-wow64-source not supplied; requires legacy WOW64 DXMT')
 
     if args.opencomposite_source:
+        run('opencomposite-base-mip', [python, 'windows-vr-openvr/tests/test_base_mip_swapchain.py',
+                                       '--source', args.opencomposite_source.expanduser().resolve(),
+                                       '--build', build / 'opencomposite-base-mip'])
         run('inverted-eye-bounds', [python, 'windows-vr-openvr/tests/test_inverted_bounds.py',
                                     args.opencomposite_source.expanduser().resolve(),
                                     '--build', build / 'inverted-eye-bounds'])
@@ -272,6 +275,7 @@ def main():
                                 args.opencomposite_source.expanduser().resolve()])
     else:
         skip('logger-lifetime', '--opencomposite-source not supplied; requires the patched overlay')
+        skip('opencomposite-base-mip', '--opencomposite-source not supplied; requires the pinned overlay and LLVM-MinGW headers')
 
     if args.simulator:
         for name in ('compositor', 'frame_transfer', 'gpu_statistics', 'presentation', 'audio_session'):

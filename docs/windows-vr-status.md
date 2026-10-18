@@ -1,5 +1,78 @@
 # Windows VR implementation status
 
+## Follow-on Lab adapter fix and remaining overlay gate (2026-10-18)
+
+OpenComposite patch 0012 requests one destination mip for ordinary D3D11
+swapchains because the adapter samples/copies the base mip. It preserves source
+dimensions, format, bounds and cube behavior; array copy and resolve select
+the source base mip with the real source mip stride. Cache compatibility uses
+the destination mip count without discarding the existing source-shape checks.
+
+The actual descriptor/copy/cache and runtime allocation methods pass ASan/UBSan
+contracts, including the 1476×800 sRGB case, source mip chains, arrays, MSAA and
+negative format/size/mip guards. The actual full pinned ARM64EC OpenComposite
+translation unit passes syntax checking; the new contract accepts the configured
+LLVM-MinGW toolchain rather than relying on one developer's absolute path.
+
+The captured failing Lab descriptor does not log its mip count, so the mip
+diagnosis is inferred from the remaining feature predicate and the actual
+adapter code. New request logging makes the next run directly inspectable.
+This fix requires the next normal runtime build. It does not implement quad
+overlay composition: The Lab submits such overlays, while the current runtime
+supports one projection layer. That separate limitation remains visible and
+prevents a complete Lab compatibility claim.
+
+## Headset regression session (2026-10-18, r12)
+
+The r12 plugin is now confirmed running on the headset: native PIDs 916
+(x64 cube), 921 (i386 cube), 923 (Tilt Brush), 930 (The Lab) and 935
+(CyberThreat) log `D766116F-EB9D-3020-8638-D3172E68C730`, matching the audited
+signed package. The earlier install commands still have timeout receipts;
+they are not relabeled successful. Actual running-image evidence is recorded
+separately. Steam authenticated online during the game launches.
+
+Both cube scenes submit and complete stereo frames with tracked head poses.
+Fresh guest API logs report pointer widths 64 and 32 respectively, each with
+18 cache records and every cache line reported as 64 bytes. Representative
+cube samples approach 90 guest updates/s. This establishes device-side behavior
+of the cache API fix in both architectures, beyond the Mac-only controls.
+
+Tilt Brush passes its previous USD initialization abort and reaches
+`FirstRunIntro` followed by `Standard`. The user reported “Intro or painting
+space”. Captures show at least 65 seconds of GPU progress, valid stereo
+frames, zero GPU failures and a representative 35.3 guest updates/s sample.
+Drawing and complete controller functionality are not yet confirmed. Its
+Google asset endpoint returns HTTP 502 errors; later zero-FOV warnings follow
+a loss of OpenXR focus and are not labeled a USD crash.
+
+The Lab receives `-popupwindow -noaq -aqmaxscale 1` in its actual child command
+line and completes 807 stereo frames without the former 5372×2507 texture
+rejection. It then aborts a different swapchain request: 1476×800, DXGI format
+29, error -8. Source inspection identifies a base-mip adapter issue; a visible
+quad-overlay path is also unsupported by the runtime's single-projection-layer
+implementation. Therefore the Lab is still not established as compatible.
+
+CyberThreat initializes OpenVR but submits no VR frames before its native
+process disappears. Its footprint rises to approximately 8 GB during Unity
+preloading. Memory pressure is a candidate, not a confirmed kill reason: no
+matching crash/Jetsam report has been captured. The available 16:57 Jetsam
+report kills `photoanalysisd`, not CyberThreat's later PID 935. Successful
+file-descriptor sends with stale errno 35 and recovered Mono SMC faults are
+not relabeled as the fatal cause.
+
+Windlands subsequently renders stereo steadily, with a representative 70.1
+guest updates/s sample and no GPU failures. This is a rendering regression
+check, not a new two-controller gameplay acceptance. Its owned test process
+974 was explicitly stopped after capture. Controller reconnection/tracking
+was inconsistent across this session; a proven stale-anchor removal race
+has a separately tested source fix, without claiming it explains every
+observed disconnect.
+
+Raw receipts and independent reviews are retained externally under
+`/Volumes/XRDev/build/WineVisionVR/headset-session-oct18`. The AirPlay receiver
+could not be inspected through the computer-control tool (timeout); only
+the user's quoted visual response is counted as visual acceptance.
+
 ## Latest signed package: Lab/Tilt runtime and health UI (2026-10-18)
 
 The fresh r11 native/guest/graphics runtime built from
