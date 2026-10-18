@@ -26,7 +26,15 @@ visionOS 27 runtime requires device type
 2732×2048 device type is incompatible. This run's isolated simulator UUID is
 `7A4EAAEB-0F88-4991-A98D-24977C9B41A1`. Its data uses Apple's default device
 directory because CoreSimulator denied creation in the external device set.
-It is shut down after testing and can be booted for future runs.
+It was shut down after testing. Later that day, its approximately 1.68 GiB
+of data was backed up to XRDev, verified by file hashes, link targets and an
+original-metadata ledger, then the exact test device was deleted with `simctl`
+to recover internal disk space. Create a new isolated device of the type above
+for future runs, or restore the archived test data. The cleanup ledger is
+`/Volumes/XRDev/build/WineVisionVR/local-space-recovery-oct18/simulator-agent-r14-20261018T172747Z/ledger.json`.
+Together with inactive Homebrew-cache cleanup, internal free space recovered
+to approximately 1.93 GiB. Physical headset data and signing/pairing files were
+not part of this cleanup.
 
 These checks are useful before deployment but do not verify StikDebug/JIT,
 FEX execution, real game loading, actual Sense tracking or sustained headset
