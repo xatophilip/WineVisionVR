@@ -1,5 +1,43 @@
 # Windows VR implementation status
 
+## Latest signed package: Lab/Tilt runtime and health UI (2026-10-18)
+
+The fresh r11 native/guest/graphics runtime built from
+`50763089dc909184b2d1f0bd233e6531fb863392` passes the strict signed-package audit
+and all six exact-packaged Mac controls: x64/i386 GDI and CPU tests, direct i386
+exception handling, and x64-parent/i386-child exception handling. All seven
+owned PE hashes, the complete package ledger and signatures remain unchanged
+before and after execution. Both Mac cache probes report 22 cache records with
+64-byte lines. These Mac results do not execute the headset's FEX runtime and
+are not a post-fix Tilt Brush or Lab gameplay pass.
+
+The final r12 app compiles launcher source
+`367de509922a21663d22f12e25b605fa1a607201` against those exact r11 runtime,
+guest and AIR inputs. Its signing/package audit passes; the runtime reuse is
+explicit rather than a second native rebuild. App UUID:
+`AFAC7A74-35CF-34EF-AB27-9C12A3E2971B`; plugin UUID:
+`D766116F-EB9D-3020-8638-D3172E68C730`.
+All 51 Swift app files pass the pinned visionOS SDK Swift 6 typecheck; current
+health/UI, Return and diagnostic-journal contracts pass, including real
+Tilt Brush, Lab, Audioshield and nonfatal CyberThreat log captures.
+
+Evidence is under `/Volumes/XRDev/build/WineVisionVR`:
+`lab-tilt-oct18-r11/verified-app-complete.json`,
+`lab-tilt-oct18-r11/final-six-local-controls/result.json`,
+`session-health-oct18-r12/verified-app-complete.json` and
+`session-health-oct18/peer-review.json`. The r11 validator's initial raw
+ARM64EC header assumption was corrected to the existing bounded CHPE-aware
+classifier, with an actual metadata-removal negative control. Original failure
+outputs and the corrected passing run are preserved and SHA-bound in
+`lab-tilt-oct18-r11/validator-correction-record.json`; signed artifacts were
+unchanged. Installation was attempted once but timed out after 120 seconds; the follow-up
+installed-app query also timed out. Therefore r12 installation is unconfirmed,
+not reported as deployed. The signed package and both device receipts remain
+under the r12 root, ready for the next reachable-headset session. No uninstall,
+prefix or Steam credential reset was performed. Post-update physical game
+acceptance remains pending; the user does not need to keep wearing the headset
+for these local build/test results.
+
 ## Follow-on runtime work: Audioshield atomic faults (2026-10-18)
 
 The current Audioshield capture (native PID 769) repeats the same unaligned
@@ -62,7 +100,7 @@ checks. Source and compiled-object inspection confirms this embedded wineserver
 reports native ARM64, so the guard applies to this platform. The existing owned
 x64/i386 cube fixtures now log the actual cache API result for headset acceptance.
 
-These are source/local validation results. A new signed runtime, post-fix game
+The signed runtime and local package controls above now pass. Post-fix game
 acceptance and headset cache-line values remain pending. The separately reviewed 32-bit
 atomic patch 0017 is follow-on source work, excluded from these frozen builds.
 
