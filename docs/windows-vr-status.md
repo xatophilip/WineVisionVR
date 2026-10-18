@@ -12,20 +12,84 @@ and paused waits are cancellable, so old cleanup cannot clear new targets.
 
 Actual-source lifecycle/UI tests, 18 tracking cases and the renderer task-store
 contracts pass locally. Existing OpenXR pause/resize/exit and session-stop checks
-also pass; this change needs no native runtime modification. A new signed app
-and physical leave/return acceptance are still pending; the installed r8 results
-below remain distinct from these source changes.
+also pass; this change needs no native runtime modification. The signed r9
+app-only package below passes its build and package audit. It is now installed,
+and the cube passed physical leave/return acceptance with working head movement.
+The installed r8 results below remain distinct from this r9 acceptance.
 
 Recent error review also confirms that the new XInput module loads in
 CyberThreat and Tilt Brush, and Tilt Brush really starts the packaged WMIC BIOS
 and baseboard queries. Those older missing-component warnings are not the current
 blocker. CyberThreat's fresh Unity log reaches OpenVR initialization without a
 fatal exception; its sampled preload thread is busy and no game frame is observed.
-Tilt Brush submits 90 frames but the user leaves while it is loading and cannot
-reenter. Neither observation establishes a game crash or completed loading.
+Tilt Brush submits 90 frames, then its guest child calls process termination
+with exit code 3 while initializing `libusd_ms.dll`. The unwind reaches
+`ucrtbase.dll+0xa7f10` through the USD library's initializer; the event lies between
+14:50:59.794 and 14:51:00.082, before the later immersive-layer invalidation at
+14:51:56.411 and the user's departure. Its subsequent OpenComposite
+`ShutdownSession` error belongs to that termination sequence. This is a confirmed
+guest abort during loading, separate from the surviving main app and its missing
+Return to VR action. Read-only analysis of the exact copied USD DLL maps the
+captured return address `libusd_ms.dll+0x745150` to its fatal
+`ARCH_CACHE_LINE_SIZE is not set correctly.` assertion: the preceding code
+compares the reported cache-line size with 64. The pinned Wine Darwin path
+reports the host cache-line size; a differing Apple Silicon value is the
+candidate compatibility defect. The exact value returned on this headset
+still needs an owned probe. No USD bypass or native cache-reporting fix is
+included in r9.
+
+The fresh, successfully copied Tilt Unity log initializes SteamVR and its 16
+actions. It contains an unsupported animated-logo video warning
+(`WindowsVideoMedia 0xc00d36c4`), but none of the older missing-WMIC/XInput,
+certificate or `NullReferenceException` messages. It does not contain the native
+USD abort reason or establish completed loading. Evidence is
+`startup-oct18-r8/tilt-brush-run-1/runtime-1.txt`, `unity-player-1.txt` and their
+successful copy receipts; the offline review is
+`reentry-oct18-r9/recent-r8-errors-review.json`.
 Audioshield's separate repeat-fault termination below remains a confirmed failure.
 
-## Latest signed package: startup recovery (2026-10-18)
+## Latest signed package: Return to VR (2026-10-18)
+
+The r9 main app built and passed signing/package validation from app source
+`67dee54800d3474e9ba5c880dee014a6e11212f0`. It compiles the Return to VR,
+renderer-retirement and windowed-controller routing changes while reusing the
+exact verified r7 native archives, AIR writer and generated resources from
+`f60825a3f97854b2a2de82d99fc6cd3e1b53c05d`. The recorded flags are
+`compiledRuntimeReuse=true` and `nativeRuntimeRebuilt=false`; this package does
+not contain a rebuilt native atomic handler or the standalone atomic probes.
+
+The new app UUID is `E382679B-D8E5-3247-BA22-BD03FD78EC96`; the reused plugin
+code retains UUID `4956DA8A-1DE5-39F9-A09C-0B541B5B8C67`. The audit validates all
+19 native archives, 998 source guest payloads and 1,121 packaged files, with exact
+r7 resource bytes and all seven owned Windows test PEs retained. Their six
+previous local control executions are linked by exact hashes, not recorded as
+new r9 executions. Strict signing succeeds and the original main bundle identity,
+entitlements and embedded profile match the prior main app.
+
+The app is
+`/Volumes/XRDev/build/WineVisionVR/reentry-oct18-r9/artifacts/xcode-derived/Build/Products/Release-xros/WineVisionVR.app`.
+Its build root contains `artifact-handoff.json`, `verified-app-complete.json`,
+`validation/result.json`, `validation/app-files.json`, `build-inputs.json` and
+`reuse-inputs.json`. The complete audit SHA-256 is
+`03eaaff9da494df154c0536ab9fa262ee38c64c40a22046867faf0c47e5d353a`.
+The r9 main app installed successfully and launched the cube as native PID 691.
+The user confirmed: “Cube returns and head movement works.” Fresh process records
+confirm the same PID before and after Return to VR, with one JIT handoff and one
+accepted launch. Return was requested at 15:03:39.884; the replacement renderer
+started at 15:03:40. At 15:03:45, guest GPU completions reached 1,204 and
+presentation completions 1,557, compared with 222 and 565 before leaving at
+15:03:30. Both samples have zero GPU failures, and the returned view has a frame,
+stereo targets and valid render poses. This establishes physical cube
+leave/return and head-movement acceptance without relaunching the guest; it does
+not establish game reentry or sustained game compatibility.
+
+Evidence is `device-install.json`, `cube-launch.json`, the fresh before/after
+launcher and process captures, and `cube-return-result.json` in the r9 build root.
+The return result SHA-256 is
+`edbbf3fa1738d55a0cba5076deeff88ca3bd829ac21094e64706c0b473dc1189`.
+The native runtime remains the reused r7 build.
+
+## Previous signed package: startup recovery (2026-10-18)
 
 The r8 main app built and passed signing/package validation from app source
 `8051a4f155821bd2fa68a7b7f193cceafc7f190f`. It reuses the exact validated r7
