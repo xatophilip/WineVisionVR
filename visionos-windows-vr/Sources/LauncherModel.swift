@@ -582,9 +582,13 @@ final class LauncherModel {
     /// The physical Windlands trial passes its splash with OpenSSL's optional
     /// CPU acceleration disabled. Keep this workaround local to that game;
     /// the underlying CPU/emulator fault has not been established.
-    nonisolated static func steamCompatibilityEnvironment(appID: Int, base: [String: String] = [:]) -> [String: String] {
+    nonisolated static func steamCompatibilityEnvironment(appID: Int, base: [String: String] = [:],
+                                                         optionExecutable: String? = nil) -> [String: String] {
         var environment = base
         if appID == 428370 { environment["OPENSSL_ia32cap"] = "0" }
+        if SteamDOSBoxCompatibility.supports(appID: appID, executable: optionExecutable) {
+            environment["SDL_VIDEODRIVER"] = "windib"
+        }
         return environment
     }
 
@@ -645,7 +649,7 @@ final class LauncherModel {
             let selected = try WindowsGameManifest(id: "steam.shared", title: game.name,
                 executableRelativePath: "AVPPlaySteam/dockhost.exe", backend: .windowsWineFEX,
                 graphics: .direct3D11, launchArguments: [],
-                environment: Self.steamCompatibilityEnvironment(appID: game.id),
+                environment: Self.steamCompatibilityEnvironment(appID: game.id, optionExecutable: option?.executable),
                 presentation: mode,
                 guestArchitecture: Self.steamGuestArchitecture(option: option, game: game, drive: MadeiraDock.drive),
                 schemaVersion: 1)
@@ -783,8 +787,12 @@ final class LauncherModel {
                     throw DockError.message("Select an installed Steam game and sign in again before launching.")
                 }
                 try MadeiraDock.validate(selection.game, drive: MadeiraDock.drive)
+                let options = SteamLocalAppInfo.launchOptions(appID: selection.game.id, game: selection.game, drive: MadeiraDock.drive)
+                    ?? SteamLibraryModel.shared.games.first(where: { $0.id == selection.game.id })?.game.launches ?? []
+                let option = options.first(where: { $0.index == selection.option })
+                let arguments = try SteamDOSBoxCompatibility.prepare(game: selection.game, option: option, drive: MadeiraDock.drive)
                 try MadeiraDock.writeHandoff(account: credentials.accountName, token: credentials.refreshToken, appID: selection.game.id)
-                MadeiraDock.configure(selection.game, launchOption: selection.option)
+                MadeiraDock.configure(selection.game, launchOption: selection.option, argumentsOverride: arguments)
             }
             // WindowsVRCore emits only the unchanged v1 plugin JSON request.
             launchLog.notice("Launch: starting runtime")
@@ -1240,6 +1248,7 @@ final class LauncherModel {
         let selectedProfile = selectedEntry?.profiles.first(where: { $0.id == selectedProfileID })
         let base = try selectedProfile?.applying(to: selectedEntry?.manifest ?? manifest) ?? manifest
         var guestArchitecture = base.guestArchitecture
+        var environment = base.environment
         if base.id == "steam.shared" {
             guard let selection = steamSelection, selection.game.name == base.title else {
                 throw DockError.message("Select this installed Steam game and its launch option again before launching.")
@@ -1251,6 +1260,8 @@ final class LauncherModel {
                 }
                 // The installed child wins over stale saved architecture fields.
                 guestArchitecture = Self.steamGuestArchitecture(option: option, game: selection.game, drive: MadeiraDock.drive)
+                environment = Self.steamCompatibilityEnvironment(appID: selection.game.id, base: base.environment,
+                                                                  optionExecutable: option.executable)
             } else {
                 // Steam's offline cache may omit a game before library refresh.
                 // Retain only an explicit remembered choice, as selection does;
@@ -1268,7 +1279,7 @@ final class LauncherModel {
             backend: base.backend,
             graphics: base.graphics,
             launchArguments: draftArguments,
-            environment: base.environment,
+            environment: environment,
             presentation: presentationModeDraft,
             guestArchitecture: guestArchitecture,
             schemaVersion: base.schemaVersion

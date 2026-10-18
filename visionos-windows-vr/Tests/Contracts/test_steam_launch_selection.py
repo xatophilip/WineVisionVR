@@ -21,7 +21,7 @@ label = 'private func optionLabel(' + view.split(
 launcher = (ROOT / 'Sources/LauncherModel.swift').read_text()
 compatibility = 'nonisolated static func steamCompatibilityEnvironment(' + launcher.split(
     'nonisolated static func steamCompatibilityEnvironment(', 1)[1].split('    /// Steam\'s 64-bit launch host', 1)[0]
-assert 'environment: Self.steamCompatibilityEnvironment(appID: game.id)' in launcher
+assert 'environment: Self.steamCompatibilityEnvironment(appID: game.id, optionExecutable: option?.executable)' in launcher
 dock = (ROOT / 'Sources/Steam/MadeiraDock.swift').read_text()
 extra_arguments = 'static func extraLaunchArguments(' + dock.split('static func extraLaunchArguments(', 1)[1].split('    @MainActor static func configure(', 1)[0]
 assert 'extraLaunchArguments(appID: game.id)' in dock
@@ -36,7 +36,8 @@ struct SteamLaunchOption {
     var type = ""
     var oslist = ""
 }
-struct DockGame { var library: String; var installDir: String }
+struct DockGame { var library: String; var installDir: String; var id: Int = 0 }
+enum DockError: Error { case message(String) }
 '''
 PROBE = r'''
 func check(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -172,7 +173,8 @@ print("PASS: Windlands-only OpenSSL CPU compatibility setting, preserved environ
 with tempfile.TemporaryDirectory(prefix='wvr-launch-selection-') as scratch:
     scratch = Path(scratch)
     resolver = (ROOT / 'Sources/Steam/SteamInstalledExecutable.swift').read_text()
-    source = (SHELL + resolver + '\nenum SteamLibraryModel {\n' + selection + '\n}\n'
+    dosbox = (ROOT / 'Sources/Steam/SteamDOSBoxCompatibility.swift').read_text()
+    source = (SHELL + resolver + dosbox + '\nenum SteamLibraryModel {\n' + selection + '\n}\n'
               + 'enum CompatibilityProbe {\n' + compatibility + '\n}\n'
               + 'struct SteamArgumentProbe {\n' + extra_arguments + '\n}\n'
               + 'struct LabelProbe {\n' + label

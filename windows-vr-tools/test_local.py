@@ -86,6 +86,8 @@ def main():
     run('vr-registration-architecture', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration_architecture.py',
                                            '--build', build / 'vr-registration-architecture'])
     run('steam-launch-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_launch_selection.py'])
+    run('steam-dosbox-compatibility', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_dosbox_compatibility.py',
+                                        '--build', build / 'steam-dosbox-compatibility'])
     run('steam-guest-architecture', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_guest_architecture.py',
                                      '--build', build / 'steam-guest-architecture'])
     run('steam-download-queue', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_download_queue.py',

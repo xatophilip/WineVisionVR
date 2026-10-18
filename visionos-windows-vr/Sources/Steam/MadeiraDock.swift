@@ -420,8 +420,8 @@ enum MadeiraDock {
         appID == 386690 ? "-vrmode openvr" : nil
     }
 
-    @MainActor static func configure(_ game: DockGame, launchOption: UInt32 = 0) {
-        if let arguments = extraLaunchArguments(appID: game.id) {
+    @MainActor static func configure(_ game: DockGame, launchOption: UInt32 = 0, argumentsOverride: String? = nil) {
+        if let arguments = argumentsOverride ?? extraLaunchArguments(appID: game.id) {
             setenv("MADEIRA_STEAM_HOST_EXTRA_ARGS", arguments, 1)
         } else {
             unsetenv("MADEIRA_STEAM_HOST_EXTRA_ARGS")

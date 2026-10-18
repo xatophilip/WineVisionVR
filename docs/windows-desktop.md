@@ -76,9 +76,14 @@ readable button text; typing, saved-note persistence and Windlands/Tilt Brush
 gameplay still need verification. Current button/quit failures are recorded below.
 Desktop sessions do not report VR compositor counters as desktop FPS.
 
-## Current physical test findings
+## Physical test findings
 
-The font update removed all `select_font` failures and displayed text on the
+On 18 October, the separate 32-bit desktop fixture passed all six automated
+input/edit/save/load/UTF-8 checks, and the user confirmed physical Count clicks
+input. Those repairs are included in the unified main app; see
+[the 32-bit validation record](windows-vr-modern-32bit.md).
+
+Earlier x64 tests, before those repairs: the font update removed all `select_font` failures and displayed text on the
 Windows buttons. Pointer motion and button-up events reach the test app, but
 button actions and cooperative Alt+F4 quit failed in that test. The user later
 confirmed that the Windows app accepted typing; saving and button actions remain
@@ -98,8 +103,8 @@ It is a managed C#/.NET Framework 4.5.2 Windows Forms AnyCPU assembly:
 PE machine I386, CLR flags `0x9`, with
 the 32-bit-required flag clear. The production executable classifier was
 compiled and run under ASan/UBSan against this exact file and rejected it at
-the current x64 preflight gate. No Notepad guest execution is claimed.
-The current app also lacks a .NET/Mono CLR.
+the then-current x64 preflight gate. No Notepad guest execution is claimed.
+The unified app still lacks a .NET/Mono CLR; native x86 support does not supply it.
 
 The executable and desktop manifest were transferred to
 `Documents/WindowsVR/Games/OldNotepad/1.1.3.0-7452918e9d76` in WineVision's own
@@ -114,3 +119,8 @@ produced both button-down and button-up, `BN_CLICKED`, `count=1` and a status
 update. This validates the demo's Windows event path on Mac Wine; it does not
 validate visionOS touch delivery or WineIOS/FEX input. Reports are under
 `/Volumes/XRDev/build/WineVisionVR/overnight-tests/desktop-host-warm-result.json`.
+
+## DOSBox / Tomb Raider I
+
+The app-specific software-renderer launch path and local test evidence are
+recorded in [Windows DOSBox / Tomb Raider](windows-desktop-dosbox.md).
