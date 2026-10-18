@@ -94,6 +94,8 @@ def main():
     run('steam-launch-selection', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_launch_selection.py'])
     run('steam-dosbox-compatibility', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_dosbox_compatibility.py',
                                         '--build', build / 'steam-dosbox-compatibility'])
+    run('steam-cyberthreat-compatibility', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_cyberthreat_compatibility.py',
+                                             '--build', build / 'steam-cyberthreat-compatibility'])
     run('steam-lab-compatibility', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_lab_compatibility.py',
                                      '--build', build / 'steam-lab-compatibility'])
     run('steam-guest-architecture', [python, 'visionos-windows-vr/Tests/Contracts/test_steam_guest_architecture.py',

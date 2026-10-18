@@ -1,5 +1,24 @@
 # Windows VR implementation status
 
+## Optional CyberThreat low-memory diagnostic (2026-10-18)
+
+The actual game's Unity 5.6.3f1 QualitySettings data contains a `Fastest`
+preset with half-resolution textures, no antialiasing and disabled shadows.
+Its serialized default is `Fantastic`, with full-resolution textures,
+antialiasing and shadows. This establishes the available settings, not the
+quality currently selected by game scripts or saved preferences.
+
+The developer-only launch flag `--cyberthreat-low-memory-test`, together with
+`--steam-smoke-test=516590`, asks the shared Steam launch configuration to
+append `-screen-quality Fastest`. The diagnostic must be enabled, the app ID
+must match, and any explicit existing quality option is preserved. Normal
+launches remain unchanged. No game assets, preferences or account files are
+modified. This is a supported, targeted next experiment for the observed
+memory growth; device memory reduction and gameplay are not yet confirmed.
+See [Unity 5.6 command-line arguments](https://docs.unity3d.com/560/Documentation/Manual/CommandLineArguments.html)
+and [quality settings](https://docs.unity3d.com/560/Documentation/Manual/class-QualitySettings.html).
+The actual helper plus full configuration-routing contract passes locally.
+
 ## Follow-on Lab adapter fix and remaining overlay gate (2026-10-18)
 
 OpenComposite patch 0012 requests one destination mip for ordinary D3D11

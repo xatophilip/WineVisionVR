@@ -21,6 +21,7 @@ env = dict(os.environ, TMPDIR=str(tmp), CLANG_MODULE_CACHE_PATH=str(tmp/"cache")
            SWIFT_MODULECACHE_PATH=str(tmp/"cache"))
 paths = {name: ROOT/relative for name, relative in {
     "helper":"visionos-windows-vr/Sources/Steam/SteamLabCompatibility.swift",
+    "cyber":"visionos-windows-vr/Sources/Steam/SteamCyberThreatCompatibility.swift",
     "dock":"visionos-windows-vr/Sources/Steam/MadeiraDock.swift",
     "launcher":"visionos-windows-vr/Sources/LauncherModel.swift",
     "view":"visionos-windows-vr/Sources/ContentView.swift"}.items()}
@@ -46,6 +47,7 @@ assert "base: argumentsOverride ?? extraLaunchArguments(appID: game.id)" in conf
 extra = body(text["dock"], "static func extraLaunchArguments(")
 shell = r"""
 import Foundation
+enum LaunchDiagnostics {static let enabled=false}
 struct DockGame {var id:Int;var customExecutables=false;var windowsInstallPath="C:\\owned-game"}
 enum SteamRuntimeFiles {static let windowsRoot="C:\\owned-steam"}
 enum SteamSignIn {static func flag(_ key:String,default fallback:Bool)->Bool {fallback}}
@@ -94,7 +96,7 @@ tests = r"""
 }
 """
 probe = a.build/"probe.swift"
-probe.write_text(text["helper"]+"\n"+shell+extra+"\n"+configure+tests)
+probe.write_text(text["helper"]+"\n"+text["cyber"]+"\n"+shell+extra+"\n"+configure+tests)
 cmd=["xcrun","swiftc","-swift-version","6","-parse-as-library","-module-cache-path",str(tmp/"cache"),str(probe),"-o",str(a.build/"probe")]
 compile_result=subprocess.run(cmd,env=env,capture_output=True,text=True,timeout=120)
 (a.build/"compile.log").write_text(compile_result.stdout+compile_result.stderr)
