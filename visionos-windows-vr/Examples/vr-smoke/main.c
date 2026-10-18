@@ -232,7 +232,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR arguments,int s
         if(inverted)ID3D11DeviceContext_ClearDepthStencilView(context,depthView,D3D11_CLEAR_DEPTH,1,0);
         for(int eye=0;eye<2;eye++){
             if(!inverted)ID3D11DeviceContext_ClearDepthStencilView(context,depthView,D3D11_CLEAR_DEPTH,1,0);
-            const int target=inverted?0:eye;float background[4]={eye==0?.025f:.045f,.035f,eye==0?.065f:.025f,1};
+            const int target=inverted?0:eye;float background[4]={.025f,.035f,.065f,1};
             if(!inverted||eye==0)ID3D11DeviceContext_ClearRenderTargetView(context,targets[target],background);
             D3D11_VIEWPORT viewport={(float)(inverted?eye*width:0),0,(float)width,(float)height,0,1};ID3D11DeviceContext_RSSetViewports(context,1,&viewport);ID3D11DeviceContext_OMSetRenderTargets(context,1,&targets[target],depthView);
             D3D11_MAPPED_SUBRESOURCE mapped;CHECK(ID3D11DeviceContext_Map(context,(ID3D11Resource*)vertices,0,D3D11_MAP_WRITE_DISCARD,0,&mapped));Vertex *v=(Vertex*)mapped.pData;

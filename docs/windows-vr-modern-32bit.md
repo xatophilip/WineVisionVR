@@ -1,8 +1,10 @@
 # Modern 32-bit Windows support — development status
 
 This work is isolated on `codex/modern-x86-support`. It is not part of the
-published working branch or the currently installed main app. The authored 32-bit desktop app now executes on the headset, but mouse input
-still fails its test. No 32-bit game is confirmed playable by these changes yet.
+published working branch or the currently installed main app. The authored 32-bit
+desktop app now passes its headset self-test, including pointer input; physical
+Count clicks taps also work. The 32-bit CPU fixture passes on the headset.
+No 32-bit game is confirmed playable by these changes yet.
 
 ## Problems found in captured diagnostics
 
@@ -394,3 +396,58 @@ The separate r4 test app installed successfully after the local gate passed,
 at bundle path `DD31ECBE-77E7-47CB-9932-FADD45B25F1C`. Xcode's automatic
 open request timed out and the subsequent process list contained no WineVision
 process. Hardware retesting is pending; this is not a device self-test PASS.
+
+
+## 18 October r4 headset desktop and CPU confirmation
+
+The installed r4 bundle `DD31ECBE-77E7-47CB-9932-FADD45B25F1C` opened after
+the earlier Xcode timeout. The new launcher log maps both frameworks from that
+exact bundle at 11:28:42 and confirms ntdll startup at 11:28:46. Its packaged
+runtime plugin is `A616C513-818F-3767-8915-E594AAD36635`, built from `63543bd`.
+
+```text
+PASS GDI desktop self-test pointerBits=32 SendInput=1 edit=1 button=1 save=1 load=1 UTF8roundtrip=1
+```
+
+The new ancestry trace returns the correct GA_ROOT for the root, button and
+editor, where r3 returned zero. GetMessage now delivers mouse-down and mouse-up;
+the real injected click increments the counter before the separate programmatic
+BM_CLICK check. Subsequent physical input increases the counter through 3–8,
+corroborating the user's explicit confirmation that tapping Count clicks works.
+This closes the captured missing-down/zero-root pointer failure on this fixture.
+
+The same app was then restarted with
+`--vr-smoke-test --x86-guest --cpu-self-test`. Its fresh 11:30 session loaded
+ntdll, completed normally, and recorded:
+
+```text
+CPU SELF TEST PASS pointerBits=32 arithmetic=0xf0d18bc8 event=signaled
+exit status=0
+```
+
+This confirms actual 32-bit Wine/FEX CPU and GDI/input execution on Vision Pro,
+in addition to local Mac tests. It does not establish D3D11/OpenVR rendering or
+32-bit game compatibility. The next separate test is the 32-bit VR scene.
+Evidence is retained under `x86-modern-oct18-r4/retest`: the desktop result,
+appended ancestry/input events, launcher identity log and CPU result/startup log.
+Earlier failures in the appended event file remain historical evidence; the
+successful r4 block starts at its new ancestry snapshot.
+
+
+### 32-bit VR scene: both-eye and head-tracking confirmation
+
+The subsequent r4 D3D11/OpenVR run submitted more than 2,400 guest frames. The
+user confirmed the coloured cube is visible in both eyes and follows head
+movement. Logs show two matched views/targets, completed guest and presentation
+GPU work with zero failed command buffers in the captured interval, and live
+head tracking. From 11:31:06.765 to 11:31:16.787 the guest submission count
+rose from 1,388 to 2,290: approximately 90 guest frames/second over this ten-second
+fixture interval, not a game benchmark or long-duration stability result.
+Guest textures were 1920 by 1792 per eye. Guest foveation was not exercised.
+
+The reported different background colours were deliberately coded into the
+fixture per eye, rather than evidence of a failed texture. Both eyes now use
+the same dark blue background. This visual-only fixture change requires new
+EXEs and local revalidation before its next device installation; the successful
+rendering observations above refer to the original r4 two-colour fixture.
+32-bit game compatibility, including Audioshield, remains unconfirmed.
