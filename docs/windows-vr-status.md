@@ -1,5 +1,29 @@
 # Windows VR implementation status
 
+## Pending launcher update: visible session health (2026-10-18)
+
+The launcher distinguishes a confirmed current-game failure from a game that
+has not submitted its first VR frame or has stopped submitting new frames.
+Loading warnings begin after 35 seconds without a first frame; stalled-frame
+warnings begin after 45 seconds without progress. These timers count only an
+active presentation with fresh tracked targets, pause when the view is left,
+and do not apply to static Windows desktop content. A timer alone never proves
+that a game crashed.
+
+Confirmed fatal errors from the current process/session reveal the launcher
+by dismissing only the immersive presentation; the native session and logs
+remain available for End session, Force quit and Return to VR. Stale logs,
+normal/helper exits and recovered faults do not trigger this action. A new
+launch attempt invalidates pending diagnostics from its predecessor. Previous
+unclean session recovery is reported without assuming a crash.
+
+The captured CyberThreat run (native PID 793) loaded assets and played music
+but its immersive renderer closed about one second after becoming focused,
+before loading completed. This is not evidence of a confirmed game crash.
+Returning to that retained session is the next headset check; no CyberThreat
+compatibility fix or visual pass is claimed. Local tests and signed packaging
+for this launcher update are tracked separately from physical game acceptance.
+
 ## Pending runtime update: The Lab and Tilt Brush (2026-10-18)
 
 The Lab now receives its officially supported `-noaq -aqmaxscale 1` settings
@@ -59,13 +83,12 @@ before the user's explicit stop at 15:10:23.239. A missing DLL or native-process
 crash is not established as its cause. The left controller is disconnected in
 this snapshot; no two-controller gameplay result is claimed.
 
-The next runtime change needs to support appropriate wider double-wide source
-textures while respecting advertised limits and the memory budget, with a
-regression for the exact failing dimensions. Silently clamping the descriptor
-would break source-copy and submitted-rectangle semantics. This is a diagnosis,
-not a deployed fix. Successful native/launcher/OpenComposite copies and their
-hashes are bound in `launcher-rows-oct18-r10/lab-errors-review.json` under the
-external build root.
+The update above instead uses Valve's supported fixed-scale settings to
+avoid this observed adaptive growth while retaining existing allocation and
+rectangle validation. Generic wider-texture support remains separate work;
+silently clamping descriptors would break source-copy semantics. Successful
+native/launcher/OpenComposite copies and their hashes are bound in
+`launcher-rows-oct18-r10/lab-errors-review.json` under the external build root.
 
 ## Return to an existing VR session (2026-10-18)
 

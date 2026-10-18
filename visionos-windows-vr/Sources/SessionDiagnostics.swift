@@ -127,9 +127,14 @@ final class SessionDiagnostics: @unchecked Sendable {
     }
 
     /// Recover journals left pending by force quit/crash before shared log rotation.
-    func recoverPendingAttempt() throws {
+    @discardableResult
+    func recoverPendingAttempt() throws -> String? {
         try synchronized {
+            var newest: (Date, String)?
             for var journal in try journals() where journal.isPending {
+                if newest == nil || journal.updatedAt > newest!.0 {
+                    newest = (journal.updatedAt, journal.metadata.title)
+                }
                 try capture(&journal, reason: "Recovered pending attempt after app restart",
                             outcome: journal.outcome == .failed ? .failed : .recovered)
                 journal.isPending = false
@@ -137,6 +142,7 @@ final class SessionDiagnostics: @unchecked Sendable {
             }
             currentID = nil
             try prune()
+            return newest?.1
         }
     }
 

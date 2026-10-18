@@ -68,6 +68,12 @@ final class LauncherModel {
     private(set) var stopRequested = false
     private(set) var requiresRestart = false
     private(set) var runtimeStatus = L("No runtime session", "Keine Laufzeitsitzung")
+    private(set) var sessionHealthNotice: GuestSessionHealth.Notice?
+    private(set) var previousSessionNotice: String?
+    @ObservationIgnored private var sessionHealth: GuestSessionHealth?
+    @ObservationIgnored private var sessionHealthLog: GuestSessionLogMonitor?
+    private var sessionHealthAttempt = UUID()
+    private var sessionHealthDismissedAttempt: UUID?
     private(set) var launchError: String?
     private(set) var library: [WindowsVRLibraryEntry] = []
     private(set) var selectedLibraryEntryID: String?
@@ -104,7 +110,10 @@ final class LauncherModel {
         if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             do {
                 let diagnostics = try SessionDiagnostics(documentsDirectory: documents)
-                try diagnostics.recoverPendingAttempt()
+                if let title = try diagnostics.recoverPendingAttempt() {
+                    previousSessionNotice = L("The previous session, \(title), ended without a confirmed stop. Its logs were saved. This can follow a force quit or an app error.",
+                                              "Die vorherige Sitzung, \(title), endete ohne bestätigten Stopp. Die Protokolle wurden gespeichert. Dies kann nach einem erzwungenen Beenden oder einem App-Fehler passieren.")
+                }
                 sessionDiagnostics = diagnostics
             } catch {
                 launchLog.error("Test session recovery failed: \(error.localizedDescription)")
@@ -788,6 +797,7 @@ final class LauncherModel {
             // The native downloader logs off before Valve's guest client uses
             // the account. Keep the token out of manifests, argv and reports.
             await SteamLibraryModel.shared.prepareForLaunch()
+            var expectedGameExecutable: String? = launchManifest.executableRelativePath
             if launchManifest.id == "steam.shared" {
                 // Say which of the four conditions fails; the user-facing error is the same for all.
                 launchLog.notice("Steam launch checks: selection=\(launchSelection != nil) exe=\(launchManifest.executableRelativePath == "AVPPlaySteam/dockhost.exe") dockFolder=\(gameDirectory.resolvingSymlinksInPath() == MadeiraDock.drive.resolvingSymlinksInPath()) signedIn=\(SteamSignIn.credentialsForDock() != nil)")
@@ -802,6 +812,7 @@ final class LauncherModel {
                 let options = SteamLocalAppInfo.launchOptions(appID: selection.game.id, game: selection.game, drive: MadeiraDock.drive)
                     ?? SteamLibraryModel.shared.games.first(where: { $0.id == selection.game.id })?.game.launches ?? []
                 let option = options.first(where: { $0.index == selection.option })
+                expectedGameExecutable = option?.executable
                 let arguments = try SteamDOSBoxCompatibility.prepare(game: selection.game, option: option, drive: MadeiraDock.drive)
                 try MadeiraDock.writeHandoff(account: credentials.accountName, token: credentials.refreshToken, appID: selection.game.id)
                 MadeiraDock.configure(selection.game, launchOption: selection.option, argumentsOverride: arguments)
@@ -811,6 +822,7 @@ final class LauncherModel {
             logImageBases()
             if launchManifest.presentation == .immersiveVR { Self.registerGuestDisplayLayer() }
             Self.resetRuntimeLog()
+            prepareSessionHealth(expectedExecutable: expectedGameExecutable)
             if LaunchDiagnostics.enabled { setenv("WVR_TRACE_BRIDGE", "1", 1) }
             if LaunchDiagnostics.enabled, let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
                 _ = wvr_trace_thread_creation_v1("WindowsRuntimePlugin", documents.appendingPathComponent("launcher-log.txt").path)
@@ -1382,12 +1394,90 @@ final class LauncherModel {
         LaunchLogFile.append("lifecycle", "\(reason.prefix(160)) accepted=\(hasAcceptedLaunch) restart=\(requiresRestart) launching=\(isLaunching) stopping=\(isStopping) stopRequested=\(stopRequested) immersiveOpen=\(immersiveSpaceIsOpen) nativeState=\(snapshot.state) compilerHandled=\(compilerFailureHandled)")
     }
 
+    private func prepareSessionHealth(expectedExecutable: String?) {
+        sessionHealthAttempt = UUID()
+        sessionHealthNotice = nil
+        previousSessionNotice = nil
+        refreshCompositorCounters()
+        sessionHealth = GuestSessionHealth(now: ProcessInfo.processInfo.systemUptime,
+                                           initialFrames: compositorCounters?.completedFrames ?? 0)
+        sessionHealthLog = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first.map {
+            GuestSessionLogMonitor(url: $0.appendingPathComponent("madeira-log.txt"),
+                                   expectedPID: ProcessInfo.processInfo.processIdentifier,
+                                   expectedExecutable: expectedExecutable)
+        }
+    }
+
+    /// A fatal notice can reveal the launcher once per attempt. Returning to VR
+    /// remains an explicit user choice even when the recorded error persists.
+    var sessionHealthPresentationDismissal: UUID? {
+        guard sessionHealthNotice?.isFailure == true,
+              sessionHealthDismissedAttempt != sessionHealthAttempt else { return nil }
+        return sessionHealthAttempt
+    }
+
+    func dismissPresentationForSessionFailure(attempt: UUID,
+                                             dismiss: () async -> Void) async {
+        guard !Task.isCancelled, attempt == sessionHealthAttempt,
+              sessionHealthPresentationDismissal == attempt,
+              hasAcceptedLaunch, presentationModeDraft == .immersiveVR,
+              immersiveSpaceIsOpen, !isLaunching, !isReturningToVR,
+              !isStopping, !stopRequested, !requiresRestart else { return }
+        sessionHealthDismissedAttempt = attempt
+        recordLifecycleEvent("Confirmed session error: revealing launcher; native session retained")
+        await dismiss()
+        // The close callback owns presentation state. Do not stop, relaunch or
+        // mutate a replacement attempt after this suspension.
+    }
+
+    private func healthPresentationIsActive() -> Bool {
+        guard presentationModeDraft == .immersiveVR, immersiveSpaceIsOpen, !isReturningToVR else { return false }
+        var readiness = WVRCompositorReadinessV1()
+        readiness.structSize = UInt32(MemoryLayout<WVRCompositorReadinessV1>.size)
+        guard wvr_compositor_copy_readiness_v1(&readiness) == 0,
+              readiness.metalDeviceBound != 0, readiness.stereoTargetsPublished != 0,
+              readiness.trackedHeadPoseAvailable != 0 else { return false }
+        // Native pause clears targets and tracking even when SwiftUI still
+        // considers the space open. A stale pose also cannot prove visibility.
+        let now = UInt64(max(0, CACurrentMediaTime() * 1.0e9))
+        let timestamp = readiness.trackingTimestampNanoseconds
+        return timestamp <= now ? now - timestamp < 500_000_000 : timestamp - now <= 100_000_000
+    }
+
+    private func refreshSessionHealth(attempt: UUID) async {
+        guard attempt == sessionHealthAttempt, hasAcceptedLaunch else { return }
+        let observedFailure = await sessionHealthLog?.sample()
+        guard !Task.isCancelled, attempt == sessionHealthAttempt, hasAcceptedLaunch else { return }
+        // Presentation teardown can itself reject OpenXR work. A new rendering
+        // error while the view is intentionally closed is not a game failure.
+        let presentationActive = healthPresentationIsActive()
+        let failure = presentationModeDraft == .immersiveVR && !presentationActive && observedFailure == .rendering
+            ? nil : observedFailure
+        guard var health = sessionHealth else { return }
+        let notice = health.update(now: ProcessInfo.processInfo.systemUptime,
+                                   frames: compositorCounters?.completedFrames,
+                                   visible: presentationActive,
+                                   running: !isStopping && !stopRequested && !requiresRestart,
+                                   failure: failure)
+        sessionHealth = health
+        if notice != sessionHealthNotice {
+            sessionHealthNotice = notice
+            if let notice {
+                LaunchLogFile.append("session-health", notice.title)
+                snapshotTestSession(reason: "Session health: " + notice.title)
+            }
+        }
+    }
+
     private func beginStatusMonitoring() {
         statusMonitor?.cancel()
+        let attempt = sessionHealthAttempt
         statusMonitor = Task { [weak self] in
             while !Task.isCancelled, let self, self.hasAcceptedLaunch {
                 self.refreshRuntimeStatus()
                 self.refreshCompositorCounters()
+                await self.refreshSessionHealth(attempt: attempt)
+                guard !Task.isCancelled, attempt == self.sessionHealthAttempt, self.hasAcceptedLaunch else { return }
                 var shaderError = [CChar](repeating: 0, count: 1024)
                 if !self.compilerFailureHandled,
                    wvr_metal_copy_compiler_failure(&shaderError, UInt32(shaderError.count)) != 0 {
@@ -1425,7 +1515,14 @@ final class LauncherModel {
         case 1: runtimeStatus = L("Runtime preparing", "Laufzeit wird vorbereitet")
         case 2: runtimeStatus = L("Wine services starting", "Wine-Dienste werden gestartet")
         case 3: runtimeStatus = L("Guest process launching", "Gastprozess wird gestartet")
-        case 4: runtimeStatus = L("Wine process active; game readiness and rendering unknown", "Wine-Prozess aktiv; Spielbereitschaft und Rendering unbekannt")
+        case 4:
+            if presentationModeDraft == .immersiveVR && !immersiveSpaceIsOpen {
+                runtimeStatus = L("VR view closed; use Return to VR to resume viewing the game",
+                                  "VR-Ansicht geschlossen; kehre mit Zurück zu VR zum Spiel zurück")
+            } else {
+                runtimeStatus = sessionHealthNotice?.title ??
+                    L("Wine process active; game readiness and rendering unknown", "Wine-Prozess aktiv; Spielbereitschaft und Rendering unbekannt")
+            }
         case 5:
             stopRequested = true
             runtimeStatus = L("Exit requested; waiting for the guest and Wine process", "Beenden angefordert; warte auf Gast- und Wine-Prozess")

@@ -132,11 +132,22 @@ struct ContentView: View {
         } message: {
             Text(model.importError ?? L("The selected item could not be opened.", "Das ausgewählte Element konnte nicht geöffnet werden."))
         }
+        .onChange(of: model.sessionHealthPresentationDismissal) { _, attempt in
+            guard let attempt else { return }
+            Task { await revealConfirmedSessionFailure(attempt: attempt) }
+        }
         .onChange(of: model.hasAcceptedLaunch) { _, accepted in
             if model.presentationModeDraft == .immersiveVR && !accepted && model.requiresRestart {
                 model.recordLifecycleEvent("dismissImmersiveSpace: accepted=false and requiresRestart=true")
                 Task { await dismissImmersiveSpace() }
             }
+        }
+    }
+
+    @MainActor
+    private func revealConfirmedSessionFailure(attempt: UUID) async {
+        await model.dismissPresentationForSessionFailure(attempt: attempt) {
+            await dismissImmersiveSpace()
         }
     }
 
@@ -233,6 +244,20 @@ struct ContentView: View {
                         if model.hasAcceptedLaunch || model.stopRequested || model.requiresRestart {
                             ForceQuitSessionButton()
                         }
+                    }
+                    if model.hasAcceptedLaunch, let notice = model.sessionHealthNotice {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label(notice.title, systemImage: notice.isFailure ? "exclamationmark.octagon" : "hourglass")
+                                .font(.headline)
+                            Text(notice.detail).font(.callout)
+                        }
+                        .foregroundStyle(notice.isFailure ? Color.red : Color.orange)
+                        .accessibilityIdentifier("session-health-notice")
+                    }
+                    if !model.hasAcceptedLaunch && !model.isLaunching, let previous = model.previousSessionNotice {
+                        Label(previous, systemImage: "clock.badge.exclamationmark")
+                            .foregroundStyle(.orange)
+                            .accessibilityIdentifier("previous-session-notice")
                     }
                     if let error = model.launchError {
                         Label(error, systemImage: "exclamationmark.circle")
