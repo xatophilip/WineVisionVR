@@ -25,10 +25,20 @@ and `final-six-local-controls/result.json` (SHA-256
 `686d2f741b359448ff43db4437352f66ed9f7c4e97d4077beb5b241953d9e472`).
 No previous runtime target objects or generated resource receipts were reused.
 
-The headset was reachable after local validation, but its actual lock-state
-receipt reported `passcodeRequired: true`. Installation and r13 headset/game
-retests remain pending an unlock; the earlier r12 results below are not
-relabeled as r13 results. Existing Steam login and downloaded games are retained.
+After the user unlocked the headset, installation succeeded. Native PID 1056
+loads the matching r13 plugin UUID and its 64-bit cube completes 494 stereo
+frames with tracked head poses, approximately 89 guest updates/s and no GPU
+failures in the captured interval. The actual guest API reports 64-bit pointers
+and 18 cache records, all with 64-byte lines. This is telemetry evidence, not
+new user visual or game acceptance.
+
+The view subsequently pauses and a successful lock-state query reports
+`passcodeRequired: true`; its guest log then reports unavailable head poses.
+Further 32-bit and game retests require the headset to remain unlocked. Earlier
+r12 results below are not relabeled as r13 results. Installation and copy receipts
+plus the independently reviewed cube evidence are retained under
+`/Volumes/XRDev/build/WineVisionVR/headset-r13-oct18`. Existing Steam login and
+downloaded games are retained.
 
 ## Optional CyberThreat low-memory diagnostic (2026-10-18)
 
