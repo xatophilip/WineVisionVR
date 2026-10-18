@@ -26,14 +26,29 @@ sample gap and one lower averaged window remain explicit; this is not a claim
 of uninterrupted 90 FPS or repaired pause/resume behavior. The test is ended
 with an explicit owned-process SIGKILL after capture.
 
-Audioshield PID 1252 also loads the new plugin. The initial runtime capture
-contains bridge registration and offset publication, but does not yet prove
-the recorded `0x207` atomic exchange was handled or that game frames arrived.
-Subsequent file-service transfers fail or time out, including after the owned
-test process is stopped. That capture limitation is preserved; Audioshield
-is not marked working. Read-only nonrecursive Documents metadata and one later
-runtime/launcher pair recovered the cube evidence, while the alternate DeviceFS
-app-data listing also stalled. Further result collection is being investigated.
+Audioshield PID 1252 also loads the new plugin. Initial file transfers were
+incomplete; restarting only the Mac's per-user CoreDevice service restores
+log retrieval. The full stopped log now proves recovery of the original fault:
+`Handled unaligned SMC exchange: new pc: 702636D058 fault: 7903340207`.
+It also contains further handled exchanges, bridge offset publication and Mono
+activation. Actual current-bundle native NTDLL and translator loading is verified;
+stale prefix DLLs are not supported as the cause of this run's later failure.
+The first Mach-handler refusal messages precede the successful FEX handling and
+must not be mistaken for final failure of that same exchange.
+
+Audioshield progresses through Mono assembly initialization, OpenVR initialization,
+action loading and managed game startup, then reaches a different Unity crash.
+The fresh Unity output reports `CryptographicException: Couldn't access random
+source` with `0x80090017` (provider type undefined). The final error points at
+kernelbase `RaiseException+0x69`, rather than the earlier kernel32 exchange.
+The crypto-provider configuration is being checked; the error alone does not
+prove the entire crash cause. No gameplay or first-frame pass is claimed.
+
+The failed transfers, alternate DeviceFS stall and bounded alternate-client
+attempts remain preserved. The optional isolated `pymobiledevice3` 11.35.0 client
+used no automatic pairing/tunnel fallback and failed without changing trust.
+It is a diagnostic tool, not an app build/runtime dependency. System-log
+collection was unavailable without administrator access and was not escalated.
 
 Current successful and failed receipts are in `headset-r14-oct18`; earlier
 r13 and r12 results below retain their original build identities.
@@ -112,9 +127,16 @@ The first attempted Lab launch reused Tilt Brush's surviving PID 1119 and is
 excluded as a Lab result. A successful SIGTERM receipt only means a signal was
 sent. The test loop now checks process disappearance and force-stops the owned
 test process when necessary before launching another title. The fresh Lab
-PID 1156 creates its initial 3840×1792 swapchain; later file transfers time out,
-so no later-stage or full compatibility result is asserted. All successful and
-failed receipts remain under `headset-r13-oct18` on the external build volume.
+PID 1156 creates its initial 3840×1792 swapchain. Its initially failed log
+transfers are later recovered after restarting the Mac CoreDevice service:
+888 stereo frames and GPU progress are captured with no GPU failure counter.
+The current log contains 515 unsupported geometry stream-output messages from
+DXMT. No fatal or actual quad-overlay rejection is captured in this run;
+the unsupported single-projection-layer design is a separate source limitation.
+This run's adapter diagnostic reports sourceMips=1 and destMips=1, so it does
+not prove multi-mip reduction. Both controllers remain disconnected. No full
+Lab compatibility result is asserted. All successful and failed receipts remain
+under `headset-r13-oct18` on the external build volume.
 
 ## Optional CyberThreat low-memory diagnostic (2026-10-18)
 
