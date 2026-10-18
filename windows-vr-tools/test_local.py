@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -193,6 +194,19 @@ def main():
         skip('window-parent-cache', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('mouse-activation', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('jit-pool-arbitration', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+
+    crypto_provider = env.get('AVPPLAY_PREFIX_CRYPTO_PROVIDER')
+    if crypto_provider:
+        crypto_provider = Path(crypto_provider).expanduser().resolve()
+    elif runtime_source:
+        crypto_provider = runtime_source / 'app/Madeira/i386-windows/rsaenh.dll'
+    if (runtime_source and (runtime_source / 'wine/dlls/rsaenh/rsaenh.rgs').is_file()
+            and crypto_provider and crypto_provider.is_file() and shutil.which('xcrun')):
+        run('prefix-crypto-migration', [python, 'windows-runtime-plugin/Tests/test_prefix_crypto_migration.py',
+                                       '--runtime-source', runtime_source, '--provider', crypto_provider,
+                                       '--build', build / 'prefix-crypto-migration'])
+    else:
+        skip('prefix-crypto-migration', 'Requires Xcode, prepared Wine source and genuine i386 rsaenh (AVPPLAY_PREFIX_CRYPTO_PROVIDER optional)')
 
     if runtime_source:
         run('native-child-bootstrap', [python, 'windows-runtime-plugin/Tests/test_native_child_bootstrap.py',

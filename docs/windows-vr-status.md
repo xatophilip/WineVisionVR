@@ -1,5 +1,18 @@
 # Windows VR implementation status
 
+## Stock 32-bit crypto defaults repair (2026-10-18)
+
+Audioshield's later random-source failure is traced to missing 32-bit stock CSP
+registry defaults in the shared win64 prefix. The production pre-start helper
+adds the pinned stock entries only when the entire 32-bit defaults subtree is
+absent, preserving existing configurations and all original hive bytes.
+The 34-case sanitizer contract and complete visionOS SDK syntax check pass.
+An isolated real guest32 probe fails before this helper, then passes all three
+provider acquisition/random-generation checks afterward. This is Mac Wine API
+proof; a signed rebuild and headset Audioshield retest remain pending.
+See [the repair, dependencies and evidence](windows-wow64-crypto-prefix.md).
+
+
 ## Fresh r14 WOW64 bridge build (2026-10-18)
 
 The source-proven missing WOW64 Mono bridge handoff is implemented in patch

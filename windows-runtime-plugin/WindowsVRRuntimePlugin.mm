@@ -30,6 +30,7 @@
 #include "JITAllocator.h"
 #include "FEXBridge.h"
 #include "WindowsVRPreservedRuntime.h"
+#include "WindowsVRPrefixCrypto.h"
 
 // Optional symbols are provided only by the modern profile-specific native
 // DXMT archive. A resource marker cannot turn a baseline archive into D3D12.
@@ -941,6 +942,36 @@ int32_t RunRequest(LaunchRequest request) {
                        [fileManager fileExistsAtPath:dosDevicesC];
     if (!prefixReady) {
         SetError("Madeira could not seed a usable Wine prefix. Bundle prefix-template.tar.gz and its system32 runtime resources in the host app.");
+        return -1;
+    }
+    // Older stock win64 templates omitted all i386 CSP defaults. Repair the
+    // inactive shared prefix before either the x64 parent or a later x86 child
+    // starts; never rewrite an existing 32-bit provider configuration.
+    NSURL *cryptoResources = [[[NSBundle mainBundle] resourceURL] URLByResolvingSymlinksInPath];
+    NSString *cryptoProvider = [cryptoResources URLByAppendingPathComponent:@"Runtime/i386-windows/rsaenh.dll"].path;
+    struct stat cryptoProviderInfo{};
+    if (lstat(cryptoProvider.fileSystemRepresentation, &cryptoProviderInfo) == 0) {
+        if (wine_process_is_running() || wineserver_is_running()) {
+            SetError("Cannot migrate crypto defaults while Wine is running.");
+            return -1;
+        }
+        // Resolve only Foundation's container root (which may use /var's OS
+        // alias); the helper rejects every symlink beneath this trusted root.
+        NSString *cryptoDocuments = [[NSURL fileURLWithPath:documents] URLByResolvingSymlinksInPath].path;
+        NSString *cryptoRelativePrefix = [prefix substringFromIndex:documents.length];
+        while ([cryptoRelativePrefix hasPrefix:@"/"]) cryptoRelativePrefix = [cryptoRelativePrefix substringFromIndex:1];
+        std::string cryptoError;
+        const auto cryptoResult = WVRPrefixCrypto::Ensure(cryptoDocuments.fileSystemRepresentation,
+                                                         cryptoRelativePrefix.UTF8String,
+                                                         cryptoResources.path.fileSystemRepresentation, cryptoError);
+        if (cryptoResult == WVRPrefixCrypto::Result::Error) {
+            SetError(cryptoError);
+            return -1;
+        }
+        std::fprintf(stderr, "[prefix-crypto32] %s\n",
+                     cryptoResult == WVRPrefixCrypto::Result::Added ? "stock defaults added" : "existing defaults preserved");
+    } else if (errno != ENOENT) {
+        SetError("Cannot inspect the bundled 32-bit crypto provider.");
         return -1;
     }
     WVRCompositorReadinessV1 compositorReadiness{};
