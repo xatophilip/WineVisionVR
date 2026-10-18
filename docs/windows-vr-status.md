@@ -1,5 +1,43 @@
 # Windows VR implementation status
 
+## Latest signed package: startup recovery (2026-10-18)
+
+The r8 main app built and passed signing/package validation from app source
+`8051a4f155821bd2fa68a7b7f193cceafc7f190f`. It reuses the exact validated r7
+native archives, source AIR writer and generated game/runtime resources from
+`f60825a3f97854b2a2de82d99fc6cd3e1b53c05d`; this is an app-only compile/link,
+not a new native/guest runtime build. Current source integration fingerprints
+and the complete native/guest/graphics/AIR receipt graph all match those inputs.
+The app UUID is `A8509109-2C41-34BF-8A5F-4518CADC8004` and runtime plugin UUID is
+`4956DA8A-1DE5-39F9-A09C-0B541B5B8C67`. All 1,121 packaged file names remain present;
+resource bytes and the seven owned Windows test PEs match r7 exactly. Their six
+passing local executions are linked by hashes rather than relabelled as new r8
+executions. The original main identity, provisioning profile and entitlements
+are retained.
+
+The broader local suite completed from the same clean app-source commit with
+**37 passing groups, zero failures and six explicit optional skips**. Its
+packaging group passed 68 tests, and the tracking startup group passed all 17
+controlled cases. The two omitted device-SDK component builds are covered by
+the complete signed app build. Separate legacy/general DXMT checks, the optional
+OpenComposite logger check and simulator execution were not requested in that
+run. Modern WOW64 transport/layout, native child bootstrap/imports, real-resource
+XInput/WMIC, OpenXR input/action/session and real host Metal checks passed.
+These are correctness results, not headset FPS or game compatibility claims.
+
+The exact app is saved at
+`/Volumes/XRDev/build/WineVisionVR/startup-oct18-r8/artifacts/xcode-derived/Build/Products/Release-xros/WineVisionVR.app`.
+The r8 build root's `verified-app-complete.json`, `reuse-inputs.json`,
+`build-inputs.json`, `validation/app-files.json` and `artifact-handoff.json`
+identify its source, inputs and sealed bytes. The complete audit SHA-256 is
+`6aa18d52203f0f944d309b0d5b769417c5461a73b8fa602588f13a0d68fe8c39`. The broader suite report is
+`/Volumes/XRDev/build/WineVisionVR/startup-host-suite-oct18/results.json`.
+
+A bounded connection check after the build still reported Vision Pro unavailable.
+The new package has **not been installed or run on the headset**; r6 remains the
+last recorded installation. Fresh VR startup, pause/reentry, both Sense
+controllers and per-game acceptance remain pending when the headset is reachable.
+
 ## Fork checkpoint (2026-10-18)
 
 The dated sections below preserve the earlier development record. For this
@@ -51,7 +89,8 @@ cancellation/pause/invalidation at setup/fallback suspension points. The exact
 prior source reproduces the failed-startup latch. Independent review, pinned
 visionOS API typechecking and source parsing passed. This does not execute an
 ARKit service or prove total authorization/pause timing or global renderer-task
-exclusivity. A new signed app build and physical acceptance remain required.
+exclusivity. The signed r8 app build above has now passed; physical acceptance
+remains pending.
 External evidence is under `cold-start-review-oct18/tracking-final/` beside the
 other build records.
 
