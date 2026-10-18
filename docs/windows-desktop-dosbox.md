@@ -49,14 +49,25 @@ Alt is jump, Shift walks, Space draws weapons, and Escape opens the inventory.
 Enter confirms menus. Physical key down/up events are supported by the desktop
 view; the visionOS text keyboard is primarily for text entry. The text keyboard does not replace held game-controller movement.
 
-Headset launch, sustained performance, keyboard input and audio still require
-verification in the combined main app. The last captured Steam attempt reported
-client error 19/update-wait before DOSBox execution. A subsequent read finds
-StateFlags 36 (Fully Installed + Files Missing); Steam content_log records the
-earlier failed attempt to launch the absent optional tombub.exe. The existing
-normal Steam update/repair path must verify the installed depot and complete
-its install record before retrying. The app must not hand-edit an appmanifest
-to bypass it.
+Headset gameplay, sustained performance, Sense/keyboard input and audio still
+require verification in the combined main app. Earlier Steam attempts reported
+client error 19/update-wait before DOSBox execution, with StateFlags 36
+(Fully Installed + Files Missing) and an absent optional tombub.exe.
+
+On 18 October, the installed r6 main app completed the normal Steam Update /
+Repair operation for app 224960 (diagnostic status 14, then 0). A fresh device
+manifest read confirmed StateFlags 4 (Fully Installed); the repaired game root
+contains DOSBox, its vendor configurations, GAME.DAT and GAME.GOG. No appmanifest
+was hand-edited. The first repair attempt was interrupted when another VR launch
+made the runtime busy; the subsequent uninterrupted repair completed.
+
+The following Tomb Raider launch request failed in visionOS's app-opening
+service (CoreDevice 10002 / FBSOpenApplicationService error 5), after which
+Xcode reported the headset unavailable. This is not evidence that DOSBox or
+Tomb Raider executed or crashed on the headset. Preserve that distinction when
+reporting compatibility. The local build evidence directory contains
+tomb-repair-retry-monitor/result.json, tomb-repair-success/ and
+tomb-dosbox-launch.json; raw device evidence is not committed.
 
 For repeatable developer repair checks, the explicit diagnostic launch argument
 `--steam-repair-test=224960` opens the normal Steam library and requests its
