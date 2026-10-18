@@ -40,6 +40,8 @@ ARM64EC_REQUIRED_BUILTINS = {
     "dwmapi.dll", "wsock32.dll", "avrt.dll", "vcruntime140.dll", "msvcp140.dll",
     # The audio endpoint client uses Madeira's already linked native driver.
     "mmdevapi.dll",
+    # Unity probes 1.3 then 9.1.0; the latter dynamically loads 1.4.
+    "xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll",
 }
 # Prefix initialization and services run through the 64-bit WoW64 host farm.
 # The translated i386 farm supplies their client DLLs, not duplicate service EXEs.

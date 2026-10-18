@@ -97,7 +97,8 @@ JOBS="${AVPPLAY_BUILD_JOBS:-4}" bash "$runtime_root/build/wine-pe/build-modules.
     shdocvw urlmon windowscodecs winspool.drv wintrust \
     advpack compstui hid imagehlp mf netutils rtworkq wined3d \
     dbghelp evr opengl32 d3d9 dxva2 glu32 ieframe sspicli psapi \
-    dwmapi wsock32 avrt vcruntime140 msvcp140 mmdevapi wbemprox
+    dwmapi wsock32 avrt vcruntime140 msvcp140 mmdevapi wbemprox \
+    xinput1_3 xinput1_4 xinput9_1_0
 # Build the genuine pinned Wine programs, including WMIC for WMI consumers.
 # wbemprox supplies its in-process provider; the existing prefix registration
 # and WineProcessBridge system32\wbem links locate it without a registry edit.
