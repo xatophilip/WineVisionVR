@@ -1,7 +1,8 @@
 # Modern 32-bit Windows support — development status
 
-This work is isolated on `codex/modern-x86-support`. It is not part of the
-published working branch or the currently installed main app. The authored 32-bit
+This work was developed on `codex/modern-x86-support` and fast-forwarded into
+`codex/local-build-and-benchmarks` on 18 October 2026 for a combined main app.
+The separate x86 test app remains useful for diagnostics. The authored 32-bit
 desktop app now passes its headset self-test, including pointer input; physical
 Count clicks taps also work. The 32-bit CPU fixture passes on the headset, and
 the 32-bit VR scene renders in both eyes with head tracking. No 32-bit game is confirmed playable by these changes yet.
@@ -468,8 +469,64 @@ Both x64/i386 desktop self-tests and CPU self-tests passed again using exact
 final packaged executable hashes. An independent agent verified this package
 comparison, local results and deep/strict signature validation. The cosmetic
 package installed separately at bundle `D2A2DC24-929E-4A3B-A88A-3A675B77CC97`.
-Its automatic open request timed out after 20 seconds; manual opening and a
-cosmetic visual confirmation remain pending. The prior r4 visual confirmation
-does not establish that the cosmetic package was observed.
+Its automatic open request timed out after 20 seconds. After manual opening,
+the user confirmed both backgrounds now match on the headset.
 Build, source export, artifact comparison, runtime-reuse proof, local test logs
 and signing evidence are retained under `x86-modern-oct18-r4-background`.
+
+
+## Combined main-app update and Steam identity
+
+The tested 32-bit work was fast-forwarded onto the original working branch,
+without dropping its 64-bit support or creating a pull request. The combined
+package uses `project.source-air-x86.yml` with the modern source runtime and
+both guest architectures enabled. The main application identity remains
+`com.philipanderson.WineVisionVR`, signed as
+`ZUFPF3R7HP.com.philipanderson.WineVisionVR`. The test-app identity is not used
+for this update.
+
+Update the existing main app in place. Preserve its data container and Keychain
+access; do not uninstall it or copy the test app's prefix over it. Steam
+authentication, Keychain service/account names, saved-library schema, download
+paths and shared prefix identity are unchanged from the prior working branch.
+Existing Steam games use `Documents/WindowsVR/Prefixes/SHA256(steam.shared)`;
+child executable inspection chooses 32-bit guest support while the Steam host
+remains 64-bit. Modern x86 support currently covers D3D11, not D3D12.
+
+Before updating, the main app's existing data-container identity and directory
+metadata were recorded. Its shared prefix contains `.update-timestamp`,
+`system.reg`, `user.reg` and `userdef.reg`, avoiding the native first-run prefix
+seed path. The main wrapper package was built from the verified source and modern runtime
+resources; no Steam credentials were exported or committed.
+
+
+### Combined main package installed and existing Steam login confirmed
+
+The unified Release app was compiled from frozen `15b99ce`, retaining the
+verified modern native archives, AIR writer and all 1,097 resources from the
+locally tested package. Source/runtime architecture and import-closure checks,
+Steam child-architecture routing, deep signature validation and an independent
+package audit passed. Its main executable UUID is
+`916EF61E-AD5C-3CD0-80D7-BC1D84AE48EB`. The embedded provisioning profile and
+four signed entitlement values exactly match the prior main app, including
+its main application/Keychain identity. No forced test arguments are embedded.
+
+The in-place update installed at bundle
+`FD268757-B125-4EA8-88D9-8D6C24A696A9`. The OS assigned a different physical
+data-container UUID. The existing prefix marker, registries and all ten Steam
+app manifests remain present. Exact metadata equality was not a suitable
+retention assertion: user activity during/after the update changed registry
+files and game metadata. The initial strict comparison is retained alongside
+a separate assessment; neither record claims registry bytes stayed identical.
+
+The user explicitly confirmed the main app is still signed in to the existing
+Steam account and shows the downloaded games. The new main process was already
+running when inspected; its launcher log maps both frameworks from the installed
+main bundle and restores existing Audioshield and Tomb Raider I selections.
+The root agent did not restart or launch over that active session. These startup
+observations do not establish that those games render or play correctly.
+
+Use the normal **WineVision VR** main app for both guest architectures. The
+separate x86 test app remains available for diagnostics. Build, signing, resource
+reuse and device-retention evidence are retained under `unified-oct18`, with
+`device/retention-assessment.json` recording the user confirmation and checks.
