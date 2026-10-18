@@ -84,6 +84,8 @@ def main():
                                    '--build', build / 'guest-session-health'])
     run('guest-startup-watchdog', [python, 'visionos-windows-vr/Tests/Contracts/test_guest_startup_watchdog.py',
                                     '--build', build / 'guest-startup-watchdog'])
+    run('controller-anchor-lifecycle', [python, 'visionos-windows-vr/Tests/Contracts/test_controller_anchor_lifecycle.py',
+                                         '--build', build / 'controller-anchor-lifecycle'])
     run('tracking-startup', [python, 'visionos-windows-vr/Tests/Contracts/test_tracking_startup.py',
                               '--build', build / 'tracking-startup'])
     run('vr-registration', [python, 'visionos-windows-vr/Tests/Contracts/test_vr_registration.py'])

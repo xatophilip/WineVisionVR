@@ -19,6 +19,8 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
     private var trackingGeneration: UInt64 = 0
     private var discoveryTask: Task<Void, Never>?
     private var lastDiagnosticByRole: [UInt32: TimeInterval] = [:]
+    private var lastConnectedInventory: String?
+    private var lastTrackingDiagnosticByRole: [UInt32: String] = [:]
 
     func configure(authorized: Bool) async -> [any DataProvider] {
         guard authorized, AccessoryTrackingProvider.isSupported else {
@@ -38,17 +40,7 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
         anchorUpdatesTask = Task { [weak self, provider, generation] in
             for await update in provider.anchorUpdates {
                 guard let self, self.isCurrentTrackingGeneration(generation) else { return }
-                switch update.event {
-                case .added, .updated:
-                    guard let role = Self.role(for: update.anchor.accessory.inherentChirality) else { continue }
-                    self.store(update.anchor, for: role, generation: generation)
-                case .removed:
-                    guard let role = Self.role(for: update.anchor.accessory.inherentChirality) else { continue }
-                    self.removeAnchor(for: role, generation: generation)
-                    self.publishUnavailable(role: role)
-                @unknown default:
-                    continue
-                }
+                self.handleAnchorUpdate(update, generation: generation)
             }
         }
         discoveryTask = Task { [weak self, provider, generation] in
@@ -57,6 +49,7 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, self.isCurrentTrackingGeneration(generation) else { return }
                 let current = Self.connectedDevices()
+                self.logConnectedInventory(current)
                 let identifiers = Set(current.map { ObjectIdentifier($0 as AnyObject) })
                 guard identifiers != Set(known.values) else { continue }
                 let (accessories, devices) = await self.discoverAccessories()
@@ -103,6 +96,8 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
             hapticPlayersByRole.removeAll()
             anchorsByRole.removeAll()
             controllersByRole.removeAll()
+            lastConnectedInventory = nil
+            lastTrackingDiagnosticByRole.removeAll()
             accessoryProvider = nil
             return (task, engines)
         }
@@ -173,6 +168,7 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
         }
 
         let tracked = predictedAnchor?.isTracked == true
+        logTrackingDiagnostic(role: role, provider: provider, anchor: anchor, predictedAnchor: predictedAnchor)
         var matrix = tracked ? predictedAnchor!.originFromAnchorTransform : matrix_identity_float4x4
         let flags: UInt32 = (tracked ? 0b011 : 0) | (controller == nil ? 0 : 0b100)
         if LaunchDiagnostics.enabled && timestamp - (lastDiagnosticByRole[role] ?? 0) >= 5 {
@@ -277,7 +273,9 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
     private func discoverAccessories() async -> ([Accessory], [UInt32: any GCDevice]) {
         var accessories: [Accessory] = []
         var devices: [UInt32: any GCDevice] = [:]
-        for device in Self.connectedDevices() {
+        let connected = Self.connectedDevices()
+        logConnectedInventory(connected)
+        for device in connected {
             do {
                 let accessory = try await Accessory(device: device)
                 guard let role = Self.role(for: accessory.inherentChirality), devices[role] == nil else { continue }
@@ -287,7 +285,7 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
                     let aliases = input.capture().buttons.map { $0.aliases.sorted().joined(separator: ",") }
                     LaunchLogFile.append("controllers", "role=\(role) button aliases=\(aliases)")
                 }
-                LaunchLogFile.append("controllers", "Discovered \(accessory.name) role=\(role) input=\(Self.input(for: device) != nil)")
+                LaunchLogFile.append("controllers", "Discovered \(accessory.name) role=\(role) device=\(ObjectIdentifier(device as AnyObject)) accessory=\(accessory.id) input=\(Self.input(for: device) != nil)")
             } catch {
                 LaunchLogFile.append("controllers", "Accessory discovery failed: \(error)")
             }
@@ -320,14 +318,60 @@ final class WindowsVRControllerProvider: @unchecked Sendable {
         }
     }
 
-    private func removeAnchor(for role: UInt32, generation: UInt64) {
-        let engine: CHHapticEngine? = lock.withLock {
-            guard trackingGeneration == generation else { return nil }
+    private func handleAnchorUpdate(_ update: AnchorUpdate<AccessoryAnchor>, generation: UInt64) {
+        guard isCurrentTrackingGeneration(generation) else { return }
+        guard let role = Self.role(for: update.anchor.accessory.inherentChirality) else { return }
+        switch update.event {
+        case .added, .updated:
+            store(update.anchor, for: role, generation: generation)
+        case .removed:
+            // A replacement can arrive before the old accessory's removal.
+            // Only retire the cached anchor whose identity was removed.
+            if removeAnchor(for: role, matching: update.anchor.id, generation: generation) {
+                publishUnavailable(role: role)
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    private func removeAnchor(for role: UInt32, matching anchorID: UUID, generation: UInt64) -> Bool {
+        let (removed, engine): (Bool, CHHapticEngine?) = lock.withLock {
+            guard trackingGeneration == generation, anchorsByRole[role]?.id == anchorID else { return (false, nil) }
             anchorsByRole.removeValue(forKey: role)
             hapticPlayersByRole.removeValue(forKey: role)
-            return hapticEnginesByRole.removeValue(forKey: role)
+            return (true, hapticEnginesByRole.removeValue(forKey: role))
         }
         engine?.stop()
+        return removed
+    }
+
+    private func logTrackingDiagnostic(role: UInt32, provider: AccessoryTrackingProvider?,
+                                       anchor: AccessoryAnchor?, predictedAnchor: AccessoryAnchor?) {
+        guard LaunchDiagnostics.enabled else { return }
+        let tracked = predictedAnchor?.isTracked == true
+        let reason = provider == nil ? "no-provider" : anchor == nil ? "no-anchor" :
+            predictedAnchor == nil ? "prediction-unavailable" : tracked ? "tracked" : "anchor-untracked"
+        let message = "role=\(role) reason=\(reason) provider=\(String(describing: provider?.state)) anchor=\(anchor?.id.uuidString ?? "none") cachedState=\(String(describing: anchor?.trackingState)) predictedState=\(String(describing: predictedAnchor?.trackingState))"
+        let changed = lock.withLock {
+            guard lastTrackingDiagnosticByRole[role] != message else { return false }
+            lastTrackingDiagnosticByRole[role] = message
+            return true
+        }
+        if changed { LaunchLogFile.append("controller-tracking", message) }
+    }
+
+    private func logConnectedInventory(_ devices: [any GCDevice]) {
+        guard LaunchDiagnostics.enabled else { return }
+        let inventory = devices.map {
+            "\(String(describing: type(of: $0)))@\(ObjectIdentifier($0 as AnyObject))"
+        }.sorted().joined(separator: ",")
+        let changed = lock.withLock {
+            guard lastConnectedInventory != inventory else { return false }
+            lastConnectedInventory = inventory
+            return true
+        }
+        if changed { LaunchLogFile.append("controller-inventory", "raw connected count=\(devices.count) devices=[\(inventory)]") }
     }
 
     private func isCurrentTrackingGeneration(_ generation: UInt64) -> Bool {
