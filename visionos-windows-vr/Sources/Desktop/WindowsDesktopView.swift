@@ -119,7 +119,7 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
         isUserInteractionEnabled = true
         layer.addSublayer(metalLayer)
         metalLayer.pixelFormat = .bgra8Unorm
-        metalLayer.drawableSize = CGSize(width: 1024, height: 768)
+        metalLayer.drawableSize = CGSize(width: CGFloat(WVR_DESKTOP_WIDTH), height: CGFloat(WVR_DESKTOP_HEIGHT))
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hover(_:))))
     }
 

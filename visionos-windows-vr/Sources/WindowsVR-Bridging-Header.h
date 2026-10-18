@@ -1,4 +1,5 @@
 #import <QuartzCore/CAMetalLayer.h>
+#import "../../windows-vr/include/WindowsVRDesktop.h"
 #import "../../windows-vr-native/include/WindowsVRCompositorBridge.h"
 #import "../../windows-vr-native/include/WindowsVRMetalDiagnostics.h"
 #import "../../windows-vr-native/include/WindowsVRThreadDump.h"

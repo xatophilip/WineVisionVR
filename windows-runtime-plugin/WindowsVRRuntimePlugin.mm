@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "WindowsVRRuntimePlugin.h"
+#include "WindowsVRDesktop.h"
 #include "WindowsVRCompositorBridge.h"
 #include "WineProcessBridge.h"
 #include "WineServerBridge.h"
@@ -88,6 +89,19 @@ void SetLaunchEnvironment(const char *key, const char *value) {
     }
     if (value) setenv(key, value, 1);
     else unsetenv(key);
+}
+
+// Seed Wine's virtual monitor before its first screen query. The compositor
+// and pointer mapper follow the live size published by win32u after startup.
+void ConfigurePresentationEnvironment(const LaunchRequest &request) {
+    SetLaunchEnvironment("MADEIRA_DESKTOP", request.presentation == "desktop" ? "1" : "0");
+    if (request.presentation == "desktop") {
+        SetLaunchEnvironment("MADEIRA_SCREEN_W", std::to_string(WVR_DESKTOP_WIDTH).c_str());
+        SetLaunchEnvironment("MADEIRA_SCREEN_H", std::to_string(WVR_DESKTOP_HEIGHT).c_str());
+        SetLaunchEnvironment("MADEIRA_SCREEN_SRC", "winevision-desktop-720p");
+        SetLaunchEnvironment("VR_OVERRIDE", nullptr);
+        SetLaunchEnvironment("XR_RUNTIME_JSON", nullptr);
+    }
 }
 
 struct LaunchScope {
@@ -1107,11 +1121,7 @@ int32_t RunRequest(LaunchRequest request) {
         SetLaunchEnvironment("FEX_APP_CACHE_LOCATION", nullptr);
     }
     SetLaunchEnvironment("MADEIRA_USE_ARM64EC", nativeARM64 ? "0" : "1");
-    SetLaunchEnvironment("MADEIRA_DESKTOP", request.presentation == "desktop" ? "1" : "0");
-    if (request.presentation == "desktop") {
-        SetLaunchEnvironment("VR_OVERRIDE", nullptr);
-        SetLaunchEnvironment("XR_RUNTIME_JSON", nullptr);
-    }
+    ConfigurePresentationEnvironment(request);
     // Desktop and VR both bind the exact device through the bridge; only VR
     // additionally requires stereo targets and a tracked head pose.
     SetLaunchEnvironment("WVR_REQUIRE_COMPOSITOR_DEVICE", "1");

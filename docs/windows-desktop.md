@@ -5,6 +5,14 @@ mode uses the existing Wine GDI/Metal compositor in a normal visionOS window.
 It does not require an immersive space or install OpenComposite/OpenXR into the
 app's prefix. It still needs StikDebug JIT and a debuggable signed build.
 
+Every desktop session starts with a **1280×720 (720p)** virtual Windows monitor,
+including Steam games that select desktop mode. The launcher supplies Wine's
+`MADEIRA_SCREEN_W/H` before startup; the desktop backing layer and the legacy
+Steam virtual-desktop argument helper use the same dimensions. Resizing the
+visionOS window scales the presentation and pointer mapping. A guest can still
+change its own display mode, which the compositor follows. Immersive VR eye
+sizes are configured separately.
+
 ## First smoke test
 
 1. Complete RemotePairing and connect StikDebug's developer tunnel. Leave
@@ -42,8 +50,12 @@ python3 windows-runtime-plugin/Tests/test_desktop_contract.py --help
 
 Runtime assembly builds the demo before generating the Xcode project. The demo
 builder verifies AMD64 PE architecture and writes a hash receipt. The native
-contract test extracts the production parser/readiness functions and runs them
-under Address/Undefined Behavior Sanitizers. The local test runner includes it.
+contract test extracts the production parser/readiness and presentation-environment
+functions and runs them under Address/Undefined Behavior Sanitizers. It verifies
+the actual desktop monitor environment, retained VR sizing and scoped environment
+restoration, and executes the legacy Steam argument helper with the shared size.
+The local test runner includes it. Add `--runtime-source /path/to/prepared-madeira`
+to compile the actual Wine monitor-size reader against the same environment.
 
 On the XRDev Mac, the signed Release build and installation passed on October
 15, 2026. The 11 Swift core tests, 32 packaging tests, native desktop contract,
