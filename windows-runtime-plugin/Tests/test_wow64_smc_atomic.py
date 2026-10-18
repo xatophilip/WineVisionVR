@@ -2,7 +2,7 @@
 """Exercise the production WoW64 SMC gate and FEX atomic/alias helpers on ARM64 Mac.
 
 Compile exact extracted production functions under ASan/UBSan. Fake only
-thread/JIT identity and exception delivery; no Wine, guest or device executes.
+thread/JIT identity, Unix-call boundary and exception delivery; no Wine, guest or device executes.
 """
 import argparse
 import hashlib
@@ -18,9 +18,11 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime-source', required=True, type=Path)
 parser.add_argument('--build', required=True, type=Path)
 args = parser.parse_args()
-args.build.mkdir(parents=True, exist_ok=True)
-work = Path(tempfile.mkdtemp(prefix='smc-atomic-', dir=args.build.resolve()))
 prepared = args.runtime_source.resolve()
+output = args.build.resolve()
+assert not output.is_relative_to(prepared) and not output.is_relative_to(ROOT), 'build must be outside source trees'
+output.mkdir(parents=True, exist_ok=True)
+work = Path(tempfile.mkdtemp(prefix='smc-atomic-', dir=output))
 relative = 'FEX/Source/Windows/WOW64/Module.cpp'
 target = work / 'source' / relative
 target.parent.mkdir(parents=True)
@@ -50,6 +52,43 @@ def smc_tail(text):
     end = text.index('\n        if (Handled) return true;', start) if 'if (Handled) return true;' in text[start:] else text.index('\n        return true;', start)
     # Exclude the closing else brace; this wrapper executes the exact else body.
     return text[start:end].rsplit('        }', 1)[0]
+
+# Privately apply the normal Wine bridge patch, including already-prepared inputs.
+handoff_patch = ROOT/'windows-runtime-plugin/patches/0019-wow64-mono-bridge-handoff.patch'
+wine_paths = ['wine/dlls/ntdll/signal_arm64.c', 'wine/dlls/ntdll/ntdll.spec',
+              'wine/dlls/wow64/syscall.c']
+wine_original = {}
+for relative in wine_paths:
+    original = prepared/relative
+    destination = work/'source'/relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(original, destination)
+    wine_original[relative] = hashlib.sha256(original.read_bytes()).hexdigest()
+def apply_handoff(*flags):
+    return subprocess.run(['git','apply',*flags,str(handoff_patch)], cwd=work/'source',
+                          capture_output=True,text=True)
+if apply_handoff('--check').returncode:
+    result = apply_handoff('--reverse')
+    assert result.returncode == 0, result.stderr
+result = apply_handoff()
+assert result.returncode == 0, result.stderr
+signal = (work/'source'/wine_paths[0]).read_text()
+spec = (work/'source'/wine_paths[1]).read_text()
+wow64 = (work/'source'/wine_paths[2]).read_text()
+getter = function(signal, 'NTSTATUS WINAPI __wine_ios_get_mono_bridge(')
+handoff = function(wow64, 'static void init_ios_mono_bridge(')
+process_init = function(wow64, 'static DWORD WINAPI process_init(')
+# Verify actual loader wiring: native export resolved from ntdll, backend export
+# from the CPU DLL, both translated before any call, before guest initialization.
+ordered = ['GET_PTR( __wine_ios_get_mono_bridge );', 'module = load_cpu_dll(',
+           'GET_PTR( BTCpuIosSetMonoBridge );', 'XLATE_PTR( BTCpuIosSetMonoBridge );',
+           'XLATE_PTR( __wine_ios_get_mono_bridge );', 'pBTCpuProcessInit();',
+           'init_ios_mono_bridge();', 'init_image_mapping( module );']
+positions = [process_init.index(marker) for marker in ordered]
+assert positions == sorted(positions), 'native-to-guest bridge init ordering changed'
+assert '#define XLATE_PTR(name) p ## name = jit_pool_code_ptr( p ## name )' in process_init
+assert '@ stdcall -private -arch=arm64 __wine_ios_get_mono_bridge(ptr)' in spec
+unix_enum = function((prepared/'wine/dlls/ntdll/unixlib.h').read_text(), 'enum ntdll_unix_funcs') + ';'
 
 atomic = (prepared/'FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp').read_text()
 alias = (prepared/'FEX/Source/Windows/WOW64/IosMonoBridge.cpp').read_text()
@@ -86,11 +125,33 @@ template<class T> struct UniqueSpinMutex { explicit UniqueSpinMutex(T*) { std::a
 }
 namespace FEXCore::DualMap { int64_t WriteOffset=1; }
 """ + bridge + r"""
+#define WINAPI
+#define __declspec(...)
+#define TRACE(...) ((void)0)
+#define ERR(...) ((void)0)
+using ULONG64=uint64_t;
+using NTSTATUS=int32_t;
+constexpr NTSTATUS STATUS_INVALID_PARAMETER=static_cast<int32_t>(0xc000000d);
 ios_mono_bridge Table{};
-ios_mono_bridge* g_MonoBridge=&Table;
-extern "C" {
-""" + function(alias, 'uint64_t IosMonoResolveRW(') + r"""
+ios_mono_bridge* g_MonoBridge=nullptr;
+unsigned UnixCalls{},PublishCalls{};
+NTSTATUS UnixStatus{};
+ULONG64 UnixBridge{};
+void* Published{};
+void ios_fex_mono_bridge_publish(void* b) { ++PublishCalls;Published=b; }
+""" + unix_enum + r"""
+NTSTATUS TestUnixCall(unsigned ordinal,ULONG64* out) {
+ assert(ordinal==unix_ios_mono_bridge_ptr);++UnixCalls;
+ *out=UnixBridge;return UnixStatus;
 }
+#define WINE_UNIX_CALL(ordinal,args) TestUnixCall(ordinal,args)
+""" + getter + r"""
+extern "C" {
+""" + function(alias, '__declspec(dllexport) void BTCpuIosSetMonoBridge(') + '\n' + function(alias, 'uint64_t IosMonoResolveRW(') + r"""
+}
+static void (WINAPI *pBTCpuIosSetMonoBridge)(ULONG64);
+static NTSTATUS (WINAPI *p__wine_ios_get_mono_bridge)(ULONG64*);
+""" + handoff + r"""
 namespace FEXCore::ArchHelpers::Arm64 {
 """ + constants + '\n' + function(atomic, 'static uint64_t IosAtomicWritableAlias(') + r"""
 template<class T> using CASExpectedFn=T (*)(T,T);
@@ -168,8 +229,35 @@ int main() {
   for(unsigned i=0;i<bytes.size();i++)
    if(i<o || i>=o+4) assert(bytes[i]==0xa5);
  };
- // Actual old SMC else reports success at an unchanged PC with no write.
+ // The native alias table can be live while this separately linked WoW64
+ // FEX copy is still unbound: reproduce the actual missing handoff seam.
  auto c=prepare();
+ auto absent=Context::HandleIosSmcUnalignedExchange(tls,&c,c.X[24]);
+ assert(absent && !*absent && c.Pc==pc && value(0x207)==0x11223344);
+ assert(IosMonoResolveRW(rx+0x200,16)==0);
+ assert(__wine_ios_get_mono_bridge(nullptr)==STATUS_INVALID_PARAMETER && UnixCalls==0);
+ UnixBridge=reinterpret_cast<uintptr_t>(&Table);
+ assert(UnixBridge>UINT32_MAX); // real full-width host pointer, never guest ULONG
+ auto resetBinding=[&] {g_MonoBridge=nullptr;Published=nullptr;PublishCalls=UnixCalls=0;};
+ pBTCpuIosSetMonoBridge=nullptr;p__wine_ios_get_mono_bridge=__wine_ios_get_mono_bridge;
+ init_ios_mono_bridge();assert(!g_MonoBridge && UnixCalls==0);
+ pBTCpuIosSetMonoBridge=BTCpuIosSetMonoBridge;p__wine_ios_get_mono_bridge=nullptr;
+ init_ios_mono_bridge();assert(!g_MonoBridge && UnixCalls==0);
+ p__wine_ios_get_mono_bridge=__wine_ios_get_mono_bridge;
+ UnixStatus=static_cast<int32_t>(0xc0000002);init_ios_mono_bridge();
+ assert(!g_MonoBridge && UnixCalls==1 && PublishCalls==0);
+ resetBinding();UnixStatus=0;UnixBridge=0;init_ios_mono_bridge();
+ assert(!g_MonoBridge && UnixCalls==1 && PublishCalls==0);
+ resetBinding();UnixBridge=reinterpret_cast<uintptr_t>(&Table);
+ Table.abi_version=IOS_MONO_ABI_VERSION+1;init_ios_mono_bridge();
+ assert(!g_MonoBridge && UnixCalls==1 && PublishCalls==0);
+ BTCpuIosSetMonoBridge(0);assert(!g_MonoBridge && PublishCalls==0);
+ resetBinding();Table.abi_version=IOS_MONO_ABI_VERSION;init_ios_mono_bridge();
+ assert(g_MonoBridge==&Table && Published==&Table && UnixCalls==1 && PublishCalls==1);
+ assert(IosMonoResolveRW(rx+0x200,16)==reinterpret_cast<uintptr_t>(bytes.data()+0x200));
+ puts("PASS actual native getter/WoW64 init/FEX setter: missing hooks/status/null/ABI fail closed; full64 pointer publishes actual alias table");
+ // Actual old SMC else reports success at an unchanged PC with no write.
+ c=prepare();
  assert(OldSmc(tls,&c,c.X[24]) && c.Pc==pc && value(0x207)==0x11223344);
  puts("PASS exact old SMC negative: claimed handled with unchanged PC/value");
  for(unsigned offset:{0x201,0x202,0x203,0x205,0x206,0x207,0x209,0x20a,0x20b}) {
@@ -378,6 +466,14 @@ report=dict(passed=True,scope=__doc__,command=command,stdout=result.stdout,
             completeResetAfterSha256=hashlib.sha256(full_after.encode()).hexdigest(),
             completeResetProbeSha256=hashlib.sha256(full_unit.read_bytes()).hexdigest(),
             patchSha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+            handoffPatchSha256=hashlib.sha256(handoff_patch.read_bytes()).hexdigest(),
+            nativeGetterSha256=hashlib.sha256(getter.encode()).hexdigest(),
+            wow64HandoffSha256=hashlib.sha256(handoff.encode()).hexdigest(),
+            fexSetterSha256=hashlib.sha256(function(alias, '__declspec(dllexport) void BTCpuIosSetMonoBridge(').encode()).hexdigest(),
+            loaderOrdering=ordered,
+            winePreparedSources=wine_original,
+            winePatchedSources={r: hashlib.sha256((work/'source'/r).read_bytes()).hexdigest() for r in wine_paths},
+            originalWineSourcesUnchanged=all(hashlib.sha256((prepared/r).read_bytes()).hexdigest()==h for r,h in wine_original.items()),
             preparedSourceSha256=hashlib.sha256(before.encode()).hexdigest(),
             patchedSourceSha256=hashlib.sha256(after.encode()).hexdigest(),
             atomicSourceSha256=hashlib.sha256(atomic.encode()).hexdigest(),

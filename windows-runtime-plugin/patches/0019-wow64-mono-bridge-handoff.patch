@@ -1,0 +1,97 @@
+--- a/wine/dlls/ntdll/signal_arm64.c
++++ b/wine/dlls/ntdll/signal_arm64.c
+@@ -38,6 +38,15 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(seh);
+ WINE_DECLARE_DEBUG_CHANNEL(relay);
++
++/* Optional native-PE accessor for the WoW64 CPU backend's Mono alias table.
++ * Keep the existing Unix-call ordinal and all Mach-O calls behind ntdll. */
++NTSTATUS WINAPI __wine_ios_get_mono_bridge( ULONG64 *bridge )
++{
++    if (!bridge) return STATUS_INVALID_PARAMETER;
++    *bridge = 0;
++    return WINE_UNIX_CALL( unix_ios_mono_bridge_ptr, bridge );
++}
+ 
+ 
+ /*******************************************************************
+--- a/wine/dlls/ntdll/ntdll.spec
++++ b/wine/dlls/ntdll/ntdll.spec
+@@ -1773,3 +1773,6 @@
+ @ cdecl wine_get_version()
+ @ cdecl wine_get_build_id()
+ @ cdecl wine_get_host_version(ptr ptr)
++
++# Optional native ARM64 handoff; no guest pointers or new Unix ordinal.
++@ stdcall -private -arch=arm64 __wine_ios_get_mono_bridge(ptr)
+--- a/wine/dlls/wow64/syscall.c
++++ b/wine/dlls/wow64/syscall.c
+@@ -155,6 +155,8 @@
+ static NTSTATUS (WINAPI *pBTCpuGetContext)(HANDLE,HANDLE,void *,void *);
+ static BOOLEAN  (WINAPI *pBTCpuIsProcessorFeaturePresent)(UINT);
+ static void     (WINAPI *pBTCpuProcessInit)(void);
++static void     (WINAPI *pBTCpuIosSetMonoBridge)(ULONG64);
++static NTSTATUS (WINAPI *p__wine_ios_get_mono_bridge)(ULONG64 *);
+ static NTSTATUS (WINAPI *pBTCpuSetContext)(HANDLE,HANDLE,void *,void *);
+ static void     (WINAPI *pBTCpuThreadInit)(void);
+ static void     (WINAPI *pBTCpuSimulate)(void) __attribute__((used));
+@@ -1116,6 +1118,25 @@
+ }
+ 
+ 
++/* Only the optional iOS backend consumes this shared host table. Resolve and
++ * translate both PE call targets before reaching here; never call a PE export
++ * directly from Mach-O or truncate the host address into a guest ULONG. */
++static void init_ios_mono_bridge(void)
++{
++    ULONG64 bridge = 0;
++    NTSTATUS status;
++
++    if (!pBTCpuIosSetMonoBridge || !p__wine_ios_get_mono_bridge) return;
++    status = p__wine_ios_get_mono_bridge( &bridge );
++    if (!status && bridge)
++    {
++        pBTCpuIosSetMonoBridge( bridge );
++        TRACE( "handed Mono bridge to WoW64 CPU backend\n" );
++    }
++    else ERR( "Mono bridge unavailable (status %lx, ptr %s)\n",
++              status, bridge ? "set" : "NULL" );
++}
++
+ /**********************************************************************
+  *           process_init
+  */
+@@ -1153,6 +1174,7 @@
+ 
+     LdrGetDllHandle( NULL, 0, &str, &module );
+     GET_PTR( LdrSystemDllInitBlock );
++    GET_PTR( __wine_ios_get_mono_bridge );
+ 
+     {
+         const WCHAR *cpu_default = NULL;
+@@ -1164,6 +1186,7 @@
+     GET_PTR( BTCpuGetContext );
+     GET_PTR( BTCpuIsProcessorFeaturePresent );
+     GET_PTR( BTCpuProcessInit );
++    GET_PTR( BTCpuIosSetMonoBridge );
+     GET_PTR( BTCpuThreadInit );
+     GET_PTR( BTCpuResetToConsistentState );
+     GET_PTR( BTCpuSetContext );
+@@ -1208,6 +1231,8 @@
+     XLATE_PTR( BTCpuGetContext );
+     XLATE_PTR( BTCpuIsProcessorFeaturePresent );
+     XLATE_PTR( BTCpuProcessInit );
++    XLATE_PTR( BTCpuIosSetMonoBridge );
++    XLATE_PTR( __wine_ios_get_mono_bridge );
+     XLATE_PTR( BTCpuThreadInit );
+     XLATE_PTR( BTCpuResetToConsistentState );
+     XLATE_PTR( BTCpuSetContext );
+@@ -1231,6 +1256,7 @@
+     init_syscall_table_pool_copy( 1, "wow64win.dll" );
+ 
+     pBTCpuProcessInit();
++    init_ios_mono_bridge();
+ 
+     /* ntdll_handle is published as the 32-bit ntdll's
+      * GUEST base (like every other LdrSystemDllInitBlock entry, which end up
