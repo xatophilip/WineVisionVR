@@ -209,6 +209,19 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(!model.canLaunch)
+                        if model.canReturnToVR || model.isReturningToVR {
+                            Button { Task { await returnToVR() } } label: {
+                                if model.isReturningToVR {
+                                    ProgressView(L("Returning to VR…", "Rückkehr zu VR …"))
+                                } else {
+                                    Label(L("Return to VR", "Zurück zu VR"), systemImage: "vision.pro")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(!model.canReturnToVR)
+                            .accessibilityIdentifier("return-to-vr")
+                        }
                         if model.hasAcceptedLaunch {
                             Button(role: .destructive) { Task { await model.stop() } } label: {
                                 Label(model.isStopping ? L("Stopping…", "Wird beendet …") : L("End session", "Sitzung beenden"), systemImage: "stop.fill")
@@ -502,6 +515,23 @@ struct ContentView: View {
     private func counter<T: BinaryInteger>(_ value: T?) -> String {
         guard let value else { return L("Unavailable", "Nicht verfügbar") }
         return String(value)
+    }
+
+    @MainActor
+    private func returnToVR() async {
+        var opened = false
+        let restored = await model.returnToVR {
+            guard case .opened = await openImmersiveSpace(id: WindowsVRCompositorScene.identifier) else {
+                throw LaunchPreparationFailure.immersiveSpaceUnavailable
+            }
+            opened = true
+            model.immersiveSpaceDidOpen()
+            try await model.waitForCompositorReady()
+        }
+        if !restored && opened {
+            model.recordLifecycleEvent("dismissImmersiveSpace: Return to VR presentation did not become ready")
+            await dismissImmersiveSpace()
+        }
     }
 
     @MainActor

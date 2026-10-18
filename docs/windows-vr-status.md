@@ -1,5 +1,30 @@
 # Windows VR implementation status
 
+## Return to an existing VR session (2026-10-18)
+
+An ordinary immersive-space closure previously called native stop and required
+an app restart. The source now keeps the accepted guest/session and offers
+**Return to VR** in the launcher. Reopening creates a fresh presentation and
+waits for tracked targets without another Wine/JIT/Steam launch. Explicit
+**End session** retains its stop behavior. Failed/cancelled reopening preserves
+the guest and offers retry. Replacement render tasks await predecessor cleanup,
+and paused waits are cancellable, so old cleanup cannot clear new targets.
+
+Actual-source lifecycle/UI tests, 18 tracking cases and the renderer task-store
+contracts pass locally. Existing OpenXR pause/resize/exit and session-stop checks
+also pass; this change needs no native runtime modification. A new signed app
+and physical leave/return acceptance are still pending; the installed r8 results
+below remain distinct from these source changes.
+
+Recent error review also confirms that the new XInput module loads in
+CyberThreat and Tilt Brush, and Tilt Brush really starts the packaged WMIC BIOS
+and baseboard queries. Those older missing-component warnings are not the current
+blocker. CyberThreat's fresh Unity log reaches OpenVR initialization without a
+fatal exception; its sampled preload thread is busy and no game frame is observed.
+Tilt Brush submits 90 frames but the user leaves while it is loading and cannot
+reenter. Neither observation establishes a game crash or completed loading.
+Audioshield's separate repeat-fault termination below remains a confirmed failure.
+
 ## Latest signed package: startup recovery (2026-10-18)
 
 The r8 main app built and passed signing/package validation from app source
@@ -70,10 +95,30 @@ user feedback. See `startup-oct18-r8/windlands-recovered-evidence.json`.
 The later process switch included a CyberThreat selection; the record does not
 establish why PID 607 ended or imply a CyberThreat gameplay result.
 
-The subsequent Tomb Raider I run reached its intro video on a flat desktop,
-confirmed by the user. Its diagnostic journal identifies Steam app 224960,
-x86 and the shared signed-in prefix. Sense control/gameplay, sustained speed
-and audio acceptance remain pending; see [DOSBox status](windows-desktop-dosbox.md).
+Job Simulator was also confirmed to display its game and allow grabbing on r8.
+The right Sense controller is connected/tracked with changing grip/button values;
+the left is absent in this sample, so this does not establish two-handed input.
+Over 25.045 seconds, guest GPU completions advance 1,622 to 4,968 and presentation
+completions 2,915 to 5,142, with zero failures. Short transfer-rate windows report
+approximately 60–69 new frames/second while the compositor displays 88–90; this
+is an interactive observation, not a controlled benchmark. Evidence is
+`startup-oct18-r8/job-simulator-run-1/launcher-2.txt` and its copy receipt.
+
+Audioshield's fresh r8 x86 run fails before game frames. A successfully copied
+current-PID native log ends in 2,000 identical host-fault redeliveries followed by
+process termination. It identifies an unaligned ARM64 SWPAL emitted for the guest
+kernel32 InterlockedExchange path; this is a concrete translator/atomic handling
+failure, not evidence that adding another DLL fixes the game. Owned reproduction
+and a narrow handler fix are being investigated. Keep the failed result:
+`startup-oct18-r8/audioshield-run-1/runtime-1.txt` and its successful copy receipt.
+
+Tomb Raider I reached its intro video and menu on a flat desktop, confirmed by
+the user, but was reported too slow to continue and did not respond to Sense
+controls. The toolbar Enter command does work. Its diagnostic journal identifies
+Steam app 224960, x86 and the shared signed-in prefix. The missing windowed-game
+controller routing has a separate scoped source fix with local tests, not yet
+installed in r8; no Tomb Raider gameplay/performance success is claimed.
+See [DOSBox status](windows-desktop-dosbox.md).
 
 ## Fork checkpoint (2026-10-18)
 

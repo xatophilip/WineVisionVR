@@ -44,7 +44,7 @@ def body(text,signature):
 # Reuse UIKit/native boundary mocks from the existing desktop input contract.
 tree=ast.parse((ROOT/'visionos-windows-vr/Tests/Contracts/test_desktop_input.py').read_text())
 prefix=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='prefix' for t in n.targets))
-fields=view[view.index('    private weak var controls:'):view.index('    init(controls:')]
+fields=view[view.index('    private weak var controls:'):view.index('    init(controls:')].replace('private let gamepadInteraction', 'let gamepadInteraction')
 for field in ('    private var attached = false\n','    var didAttach: (() -> Void)?\n','    var didDetach: (() -> Void)?\n'):fields=fields.replace(field,'')
 methods=view[view.index('    func toggleKeyboard() {'):view.index('    var keyboardType:')].replace('@objc private func hover','private func hover')
 mapping=body(gamepad,'enum WindowsDesktopGamepadMapping {')
@@ -53,6 +53,9 @@ scope=body(launcher,'var supportsTombRaiderDesktopControls: Bool')
 assert 'input.capture()' in sampler and 'GCSpatialAccessory.spatialAccessories' in sampler and 'ObjectIdentifier($0)' in sampler
 assert 'import ARKit' not in gamepad and 'AccessoryTrackingProvider' not in gamepad
 assert '.task(id: gamepadActive)' in view and 'controls.releaseInput()' in view
+assert 'gamepadActive: gamepadActive' in view and 'view.gamepadInputEnabled = gamepadActive' in view
+assert 'addInteraction(gamepadInteraction)' in view and 'gamepadInteraction.receivesEventsInView = false' in view
+assert 'view.gamepadInputEnabled = false' in body(view, 'static func dismantleUIView(')
 stubs=constant_declarations+r'''
 protocol GCDevice:AnyObject {}
 struct Pressed { var isPressed:Bool }
@@ -81,7 +84,12 @@ enum SteamDOSBoxCompatibility { static let appID=224960 }
 tests=r'''
 func check(_ condition:@autoclosure ()->Bool,_ message:String) { if !condition(){fatalError(message)} }
 let c=WindowsDesktopControls(),s=WindowsDesktopSurface(c)
+check(s.gamepadInteraction.handledEventTypes.isEmpty,"Default surface must not claim controller events")
+s.gamepadInputEnabled=true
+check(s.gamepadInteraction.handledEventTypes.isEmpty,"Unaccepted surface claimed controller events")
 s.inputEnabled=true
+check(s.gamepadInteraction.handledEventTypes == .gamepad,"Active opted-in surface did not claim raw gamepad events")
+check(!s.gamepadInteraction.receivesEventsInView,"Raw gamepad events also generated duplicate UIKit pinches")
 let leftInput=Input(),rightInput=Input()
 let left=GCSpatialAccessory(leftInput),right=GCSpatialAccessory(rightInput)
 GCSpatialAccessory.spatialAccessories=[left,right];GCController.connected=[left,right]
@@ -106,6 +114,18 @@ events=[];s.pressesBegan([control],with:nil);s.updateGamepadKeys([0xA2]);s.press
 check(events == [.key(0xA2,1)],"Physical release interrupted held gamepad control")
 s.updateGamepadKeys([]);check(events == [.key(0xA2,1),.key(0xA2,0)],"Gamepad final release missing")
 print("PASS: latest-state hold, device dedup, overlapping controllers and physical/gamepad source ownership")
+events=[];s.updateGamepadKeys([0x26]);s.pressesBegan([control],with:nil)
+s.gamepadInputEnabled=false
+check(s.gamepadInteraction.handledEventTypes.isEmpty,"Disabled Sense toggle did not restore UI event routing")
+check(events == [.key(0x26,1),.key(0xA2,1),.key(0x26,0)],"Routing disable did not release only gamepad-owned keys")
+s.pressesEnded([control],with:nil)
+check(events.last == .key(0xA2,0),"Routing disable disturbed physical keyboard ownership")
+s.gamepadInputEnabled=true
+check(s.gamepadInteraction.handledEventTypes == .gamepad,"Re-enabled Sense routing failed")
+s.updateGamepadKeys([0x20]);s.inputEnabled=false
+check(s.gamepadInteraction.handledEventTypes.isEmpty && events.last == .key(0x20,0),"Inactive/disabled session failed to restore UI routing and release held gamepad key")
+s.inputEnabled=true
+print("PASS: production raw-gamepad routing requires accepted opted-in surface; disable restores UI routing and releases only owned keys")
 let all=WindowsDesktopGamepadMapping.keys(pressed:{ ["Button A","Button B","Left Shoulder",GCInputButtonOptions,"Left Thumbstick Button"].contains($0) },axis:{_ in nil},stick:{_ in nil})
 check(all == [0xA4,0x20,0xA0,0x1B,0x0D],"Button aliases or Windows keys changed")
 for name in [GCInputButtonMenu,GCInputButtonOptions,GCInputButtonShare] {

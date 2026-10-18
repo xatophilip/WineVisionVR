@@ -47,6 +47,10 @@ enum Failure:Error { case unavailable }
  var state=State.running
  var resumes=0
  func waitUntilRunning() { resumes+=1;state = .running }
+ func pause() {
+  state = .paused
+  Task { try? await Task.sleep(for:.milliseconds(40));resumes+=1;state = .running }
+ }
 }
 @MainActor final class Session {
  var outcomes:[Bool]
@@ -101,7 +105,7 @@ enum Failure:Error { case unavailable }
  func renderNextFrame() {
   if layerRenderer.state != .running || Task.isCancelled { invalidFrames+=1 }
   frames+=1
-  if pauseAfterFirst && frames==1 { layerRenderer.state = .paused }
+  if pauseAfterFirst && frames==1 { layerRenderer.pause() }
   if frames>=3 { withUnsafeCurrentTask { $0?.cancel() } }
  }
 '''
@@ -116,7 +120,7 @@ driver=r'''
   let names=baseline ? ["recovery"]:["recovery","fallback","pause","cancel-authorization",
        "cancel-configure","pause-run","invalidate-run","cancel-run","persistent-cancel",
        "delayed-stop","pause-authorization","invalidate-authorization","pause-configure",
-       "invalidate-configure","pause-fallback","cancel-fallback","invalidate-fallback"]
+       "invalidate-configure","pause-fallback","cancel-fallback","invalidate-fallback","cancel-paused"]
   for name in names {
    let outcomes:[Bool]=name=="recovery" ? [false,false,true] :
        (name=="fallback" || name.hasSuffix("-fallback") ? [false,true,true] : (name=="persistent-cancel" ? Array(repeating:false,count:100):[true,true]))
@@ -126,7 +130,7 @@ driver=r'''
    for phase in ["authorization","configure","fallback"] {
     if name=="pause-"+phase || name=="invalidate-"+phase || name=="cancel-"+phase {
      let hook:()->Void={
-      if name.hasPrefix("pause-") { renderer.layerRenderer.state = .paused }
+      if name.hasPrefix("pause-") { renderer.layerRenderer.pause() }
       else if name.hasPrefix("invalidate-") { renderer.layerRenderer.state = .invalidated }
       else { withUnsafeCurrentTask { $0?.cancel() } }
      }
@@ -141,11 +145,15 @@ driver=r'''
    if name=="cancel-configure" {
     renderer.controllerTracking.configureHook={ withUnsafeCurrentTask { $0?.cancel() } }
    }
-   if name=="pause-run" { renderer.arSession.runHook={ renderer.layerRenderer.state = .paused } }
+   if name=="pause-run" { renderer.arSession.runHook={ renderer.layerRenderer.pause() } }
    if name=="invalidate-run" { renderer.arSession.runHook={ renderer.layerRenderer.state = .invalidated } }
    if name=="cancel-run" { renderer.arSession.runHook={ withUnsafeCurrentTask { $0?.cancel() } } }
+   if name=="cancel-paused" { renderer.layerRenderer.state = .paused }
    let start=ProcessInfo.processInfo.systemUptime
    let task=Task { await renderer.run() }
+   if name=="cancel-paused" {
+    try? await Task.sleep(for:.milliseconds(50));task.cancel()
+   }
    if name=="persistent-cancel" {
     try? await Task.sleep(for:.milliseconds(1200))
     task.cancel()
@@ -180,6 +188,9 @@ driver=r'''
     check(session.attempts==0 && renderer.frames==0,"Session started after cancellation")
    } else if name=="invalidate-run" || name=="cancel-run" {
     check(session.attempts==1 && renderer.frames==0,"Post-await termination rendered or restarted")
+   } else if name=="cancel-paused" {
+    check(session.attempts==0 && renderer.frames==0 && ProcessInfo.processInfo.systemUptime-start<0.3,
+          "Paused SDK wait blocked renderer retirement")
    } else if name=="persistent-cancel" {
     check(session.attempts>=4 && session.attempts<=6,"Persistent failure hot loop or missing retry")
     check(ProcessInfo.processInfo.systemUptime-start<1.8,"Backoff ignored cancellation")

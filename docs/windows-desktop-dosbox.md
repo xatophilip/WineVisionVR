@@ -84,10 +84,20 @@ After the restart, r8 installed under the original bundle identity. The explicit
 JIT handoff completed, the flat desktop surface attached, Steam reported
 `launch-client-error=0`, and the user confirmed seeing Tomb Raider's intro video.
 The bounded app journal identifies app 224960, x86 and the shared Steam prefix.
-This supersedes the earlier battery-interrupted attempt as execution evidence;
-it does not yet establish playable levels, working Sense input, sustained speed
-or audio quality. Use the right Sense controller's small Options button to send
-Escape/skip the intro, stick click for Enter and the stick for movement.
+This supersedes the earlier battery-interrupted attempt as execution evidence.
+The user then reached the menu but reported no Sense response and very slow
+operation; the toolbar Controls → Enter does work. Testing switched back to VR.
+Playable levels, physical Sense input, acceptable speed and audio quality are
+not established on the headset.
+
+A scoped source fix adds Apple's documented `GCEventInteraction` to the Metal
+surface while the Tomb Sense toggle and existing session/scene gates are active.
+By default visionOS converts controller actions into UIKit pinch events; this
+interaction requests raw gamepad events and avoids duplicate pinch delivery.
+Disabling the toggle/session restores UI routing and releases gamepad-owned keys.
+The actual-source routing/input contracts and whole-view visionOS 27 SDK
+typecheck pass. This fix is not in the installed r8 app and has not been tested
+on the headset. It does not change DOSBox core/cycles or claim a speed fix.
 
 Local evidence is under `/Volumes/XRDev/build/WineVisionVR/startup-oct18-r8/`:
 `tomb-launch.json`, `tomb-launcher-1.txt`, `tomb-session-journal.json` and their

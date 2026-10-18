@@ -114,6 +114,10 @@ def main():
                           '--build', build / 'desktop-input'])
     run('desktop-gamepad', [python, 'visionos-windows-vr/Tests/Contracts/test_desktop_gamepad.py',
                             '--build', build / 'desktop-gamepad'])
+    run('return-to-vr', [python, 'visionos-windows-vr/Tests/Contracts/test_return_to_vr.py',
+                         '--build', build / 'return-to-vr'])
+    run('compositor-task-retirement', [python, 'visionos-windows-vr/Tests/Contracts/test_compositor_task_retirement.py',
+                                      '--build', build / 'compositor-task-retirement'])
     run('desktop-launch-contract', [python, 'windows-runtime-plugin/Tests/test_desktop_contract.py',
                                     '--build', build / 'desktop-contract'])
     run('guest-runtime-mapping', [python, 'windows-runtime-plugin/Tests/test_guest_runtime_mapping.py',

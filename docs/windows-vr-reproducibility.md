@@ -51,6 +51,16 @@ For a change-by-change explanation and exact dependency pins, see
 [what this fork added](windows-vr-fork-changes.md). Key retained binary/receipt
 hashes are recorded in [the runtime inventory](windows-vr-runtime-inventory.json).
 
+## Returning after leaving immersive mode
+
+In the updated launcher, leaving the immersive view keeps the accepted game
+session. Open WineVision's launcher and choose **Return to VR** to reopen that
+same game; **Play** starts a new session and is not the resume action.
+**End session** explicitly stops the game. A failed/cancelled return can be retried
+without a new JIT or Steam handoff. The first source checks for this behavior
+pass locally; see [current package and headset acceptance](windows-vr-status.md)
+before assuming a particular installed build includes it.
+
 ## Required inputs outside Git
 
 | Input | How to obtain or regenerate it |

@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import GameController
 import Metal
 import Observation
 import WindowsVRCore
@@ -65,7 +66,7 @@ struct WindowsDesktopView: View {
             if model.stopRequested || model.requiresRestart {
                 ForceQuitSessionButton()
             }
-            WindowsDesktopSurfaceView(model: model, controls: controls)
+            WindowsDesktopSurfaceView(model: model, controls: controls, gamepadActive: gamepadActive)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.black)
                 .accessibilityLabel(L("Windows app screen", "Windows-App-Anzeige"))
@@ -94,6 +95,7 @@ struct WindowsDesktopView: View {
 private struct WindowsDesktopSurfaceView: UIViewRepresentable {
     let model: LauncherModel
     let controls: WindowsDesktopControls
+    let gamepadActive: Bool
 
     func makeUIView(context: Context) -> WindowsDesktopSurface {
         let view = WindowsDesktopSurface(controls: controls)
@@ -106,9 +108,11 @@ private struct WindowsDesktopSurfaceView: UIViewRepresentable {
     func updateUIView(_ view: WindowsDesktopSurface, context: Context) {
         // A normal Windows app can ask to save after Alt-F4; keep that dialog usable.
         view.inputEnabled = model.hasAcceptedLaunch && !model.isStopping
+        view.gamepadInputEnabled = gamepadActive
     }
 
     static func dismantleUIView(_ view: WindowsDesktopSurface, coordinator: ()) {
+        view.gamepadInputEnabled = false
         view.releaseInput()
         view.didDetach?()
         _ = winios_compositor_set_hidden(1)
@@ -120,6 +124,7 @@ private struct WindowsDesktopSurfaceView: UIViewRepresentable {
 final class WindowsDesktopSurface: UIView, UIKeyInput {
     private let metalLayer = CAMetalLayer()
     private weak var controls: WindowsDesktopControls?
+    private let gamepadInteraction = GCEventInteraction()
     private var keysHeld: Set<Int32> = []
     private var gamepadKeysHeld: Set<Int32> = []
     private var activeTouch: UITouch?
@@ -128,8 +133,14 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
     private var attached = false
     var didAttach: (() -> Void)?
     var didDetach: (() -> Void)?
+    var gamepadInputEnabled = false {
+        didSet { updateGamepadRouting() }
+    }
     var inputEnabled = false {
-        didSet { if !inputEnabled { releaseInput() } }
+        didSet {
+            if !inputEnabled { releaseInput() }
+            updateGamepadRouting()
+        }
     }
 
     init(controls: WindowsDesktopControls) {
@@ -137,6 +148,11 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
         super.init(frame: .zero)
         backgroundColor = .black
         isUserInteractionEnabled = true
+        // visionOS otherwise converts controller actions into UI pinch events.
+        // Claim gamepad events only for the active, opted-in flat game surface.
+        gamepadInteraction.receivesEventsInView = false
+        gamepadInteraction.handledEventTypes = []
+        addInteraction(gamepadInteraction)
         layer.addSublayer(metalLayer)
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.drawableSize = CGSize(width: CGFloat(WVR_DESKTOP_WIDTH), height: CGFloat(WVR_DESKTOP_HEIGHT))
@@ -181,6 +197,12 @@ final class WindowsDesktopSurface: UIView, UIKeyInput {
     func toggleKeyboard() {
         guard inputEnabled else { return }
         if isFirstResponder { resignFirstResponder() } else { becomeFirstResponder() }
+    }
+
+    private func updateGamepadRouting() {
+        let enabled = inputEnabled && gamepadInputEnabled
+        gamepadInteraction.handledEventTypes = enabled ? .gamepad : []
+        if !enabled { updateGamepadKeys([]) }
     }
 
     private func map(_ point: CGPoint) -> (Int32, Int32)? {

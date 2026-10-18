@@ -25,7 +25,7 @@ struct WindowsVRCompositorScene: Scene {
                 let transfer = WindowsVRLayerRendererTransfer(renderer: layerRenderer)
                 let taskIdentity = UUID().uuidString
                 LaunchLogFile.append("lifecycle", "CompositorLayer created task=\(taskIdentity)")
-                let task = Task.detached(executorPreference: WindowsVRRenderTaskExecutor.shared) {
+                WindowsVRCompositorTaskStore.shared.install {
                     LaunchLogFile.append("lifecycle", "Render task entered id=\(taskIdentity)")
                     defer { LaunchLogFile.append("lifecycle", "Render task returned id=\(taskIdentity) cancelled=\(Task.isCancelled)") }
                     if #available(visionOS 27.0, *) {
@@ -33,7 +33,6 @@ struct WindowsVRCompositorScene: Scene {
                         await renderer.run()
                     }
                 }
-                WindowsVRCompositorTaskStore.shared.install(task)
             }
             .onDisappear {
                 model.recordLifecycleEvent("CompositorLayer onDisappear; cancelling renderer")
@@ -52,25 +51,32 @@ private final class WindowsVRCompositorTaskStore: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
 
-    func install(_ newTask: Task<Void, Never>) {
+    func install(_ operation: @escaping @Sendable () async -> Void) {
         let previous = lock.withLock {
             let previous = task
-            task = newTask
+            previous?.cancel()
+            // Serial executor jobs can interleave at awaits. Join the old
+            // renderer's cleanup before the replacement publishes any state.
+            task = Task.detached(executorPreference: WindowsVRRenderTaskExecutor.shared) {
+                if let previous { await previous.value }
+                guard !Task.isCancelled else { return }
+                await operation()
+            }
             return previous
         }
         LaunchLogFile.append("lifecycle", "Render task installed replacingExisting=\(previous != nil)")
-        previous?.cancel()
     }
 
     func stop() {
-        let running = lock.withLock {
-            let running = task
-            task = nil
-            return running
+        // Keep the predecessor until the next install can join its cleanup.
+        // Pause before releasing ownership so a concurrent install cannot
+        // publish replacement targets ahead of this stop's native pause.
+        let hadTask = lock.withLock {
+            task?.cancel()
+            wvr_compositor_pause_v1()
+            return task != nil
         }
-        LaunchLogFile.append("lifecycle", "Render task store stop hasTask=\(running != nil)")
-        running?.cancel()
-        wvr_compositor_pause_v1()
+        LaunchLogFile.append("lifecycle", "Render task store stop hasTask=\(hadTask)")
     }
 }
 
@@ -278,6 +284,7 @@ private final class WindowsVRCompositorRenderer {
         }
 
         var trackingStarted = false
+        var layerWasPaused = false
         defer {
             LaunchLogFile.append("lifecycle", "Render task ended; cancelled=\(Task.isCancelled)")
             arSession.stop()
@@ -288,16 +295,22 @@ private final class WindowsVRCompositorRenderer {
         while !Task.isCancelled {
             switch layerRenderer.state {
             case .paused:
-                Self.log.notice("Layer renderer paused")
-                LaunchLogFile.append("lifecycle", "Layer renderer paused")
-                wvr_compositor_pause_v1()
+                if !layerWasPaused {
+                    Self.log.notice("Layer renderer paused")
+                    LaunchLogFile.append("lifecycle", "Layer renderer paused")
+                    wvr_compositor_pause_v1()
+                    layerWasPaused = true
+                }
                 if trackingStarted {
                     arSession.stop()
                     controllerTracking.reset()
                     trackingStarted = false
                 }
-                layerRenderer.waitUntilRunning()
+                // The SDK's blocking wait cannot observe Task cancellation.
+                // Suspend briefly so a closed paused layer can retire promptly.
+                try? await Task.sleep(for: .milliseconds(20))
             case .running:
+                layerWasPaused = false
                 if !trackingStarted {
                     Self.log.notice("Layer renderer running; starting tracking")
                     trackingStarted = await startTracking()

@@ -38,6 +38,14 @@ func winios_desktop_point_from_window(_ x:Double,_ y:Double,_ ox:inout Int32,_ o
 }
 func L(_ en:String,_ de:String)->String { en }
 class WindowsDesktopControls { var inputMessage:String? }
+struct GCUIEventTypes:OptionSet {
+ let rawValue:Int
+ static let gamepad=GCUIEventTypes(rawValue:1)
+}
+class GCEventInteraction {
+ var handledEventTypes:GCUIEventTypes=[]
+ var receivesEventsInView=false
+}
 struct ButtonMask:OptionSet { let rawValue:Int; static let secondary=ButtonMask(rawValue:2) }
 class UIEvent { var buttonMask:ButtonMask; init(_ b:ButtonMask=[]) { buttonMask=b } }
 class UIPressesEvent {}

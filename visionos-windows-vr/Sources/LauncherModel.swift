@@ -64,6 +64,7 @@ final class LauncherModel {
     private(set) var isLaunching = false
     private(set) var hasAcceptedLaunch = false
     private(set) var isStopping = false
+    private(set) var isReturningToVR = false
     private(set) var stopRequested = false
     private(set) var requiresRestart = false
     private(set) var runtimeStatus = L("No runtime session", "Keine Laufzeitsitzung")
@@ -125,6 +126,11 @@ final class LauncherModel {
     var supportsTombRaiderDesktopControls: Bool {
         manifest?.id == "steam.shared" && selectedSteamAppID == SteamDOSBoxCompatibility.appID &&
             presentationModeDraft == .desktop && manifest?.environment["SDL_VIDEODRIVER"] == "windib"
+    }
+
+    var canReturnToVR: Bool {
+        presentationModeDraft == .immersiveVR && hasAcceptedLaunch && !immersiveSpaceIsOpen &&
+            !isLaunching && !isReturningToVR && !isStopping && !stopRequested && !requiresRestart
     }
 
     var canLaunch: Bool {
@@ -824,14 +830,7 @@ final class LauncherModel {
             runtimeStatus = L("Launch accepted; game readiness unknown", "Start wurde angenommen; Spielbereitschaft unbekannt")
             beginStatusMonitoring()
             if launchManifest.presentation == .immersiveVR && (!immersiveSpaceIsOpen || immersiveSpaceClosedDuringLaunch) {
-                try await runtime.stop()
-                finishTestSession(outcome: .stopped, reason: "Stop confirmed after immersive presentation closed during launch")
-                hasAcceptedLaunch = false
-                requiresRestart = true
-                statusMonitor?.cancel()
-                statusMonitor = nil
-                releaseGameDirectoryAccess()
-                runtimeStatus = L("Runtime stopped; restart the app before another launch", "Laufzeit beendet; starte die App neu, bevor du ein weiteres Spiel startest")
+                preserveSessionForVRReturn()
             }
         } catch {
             launchLog.error("Launch failed (accepted=\(self.hasAcceptedLaunch)): \(String(describing: error)); native=\(self.runtime.nativeStatus().lastError ?? "")")
@@ -844,7 +843,6 @@ final class LauncherModel {
                 MadeiraDock.cleanup()
                 SteamLibraryModel.shared.resumeAfterLaunchFailure()
             }
-            if immersiveSpaceClosedDuringLaunch && hasAcceptedLaunch { requiresRestart = true }
             if hasAcceptedLaunch {
                 recordStopFailure(error, becauseImmersiveClosed: immersiveSpaceClosedDuringLaunch)
             } else {
@@ -1050,21 +1048,38 @@ final class LauncherModel {
         immersiveSpaceIsOpen = false
         if isLaunching { immersiveSpaceClosedDuringLaunch = true }
         guard presentationModeDraft == .immersiveVR, hasAcceptedLaunch, !isStopping, !stopRequested else { return }
-        snapshotTestSession(reason: "Immersive presentation closed; requesting native stop")
-        isStopping = true
-        defer { isStopping = false }
+        preserveSessionForVRReturn()
+    }
+
+    private func preserveSessionForVRReturn() {
+        snapshotTestSession(reason: "Immersive presentation closed; native game retained for Return to VR")
+        runtimeStatus = L("VR view closed; use Return to VR to resume viewing the game",
+                          "VR-Ansicht geschlossen; kehre mit Zurück zu VR zum Spiel zurück")
+    }
+
+    /// Reopen presentation for the same accepted guest. No JIT, Steam handoff,
+    /// runtime launch, prefix setup or session replacement occurs here.
+    func returnToVR(preparePresentation: () async throws -> Void) async -> Bool {
+        guard canReturnToVR else { return false }
+        isReturningToVR = true
+        launchError = nil
+        defer { isReturningToVR = false }
+        recordLifecycleEvent("Return to VR requested")
         do {
-            try await runtime.stop()
-            finishTestSession(outcome: .stopped, reason: "Native stop confirmed after immersive presentation closed")
-            hasAcceptedLaunch = false
-            requiresRestart = true
-            runtimeStatus = L("Runtime stopped; restart the app before another launch", "Laufzeit beendet; starte die App neu, bevor du ein weiteres Spiel startest")
-            statusMonitor?.cancel()
-            statusMonitor = nil
-            releaseGameDirectoryAccess()
+            try await preparePresentation()
+            guard hasAcceptedLaunch, !isStopping, !stopRequested, !requiresRestart,
+                  immersiveSpaceIsOpen else { throw LaunchPreparationFailure.immersiveSpaceClosed }
+            snapshotTestSession(reason: "Returned to VR with the existing native game; rendering unverified")
+            runtimeStatus = L("Returned to VR; game readiness and rendering unknown",
+                              "Zu VR zurückgekehrt; Spielbereitschaft und Rendering unbekannt")
+            return true
         } catch {
-            requiresRestart = true
-            recordStopFailure(error, becauseImmersiveClosed: true)
+            snapshotTestSession(reason: "Return to VR did not become ready; native session retained")
+            if hasAcceptedLaunch && !isStopping && !stopRequested && !requiresRestart {
+                launchError = L("Could not return to VR. The game session is still active; try Return to VR again. \(error.localizedDescription)",
+                                "Rückkehr zu VR fehlgeschlagen. Die Spielsitzung bleibt aktiv; versuche es erneut. \(error.localizedDescription)")
+            }
+            return false
         }
     }
 
