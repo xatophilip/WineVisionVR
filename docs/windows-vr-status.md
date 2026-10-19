@@ -42,8 +42,11 @@ first loading frames at 30 seconds are followed by usable rendering around
 90 seconds. The user confirms the loading screen glitches, then the game works.
 No startup speedup is claimed. A guarded SOFTWARE-policy follow-up and explicit
 native signal-delivery diagnostic are tested locally and awaiting signed/device
-validation. Tilt Brush drawing is user-confirmed in r16, followed by a stop;
-full-session stability is not established.
+validation. Tilt Brush drawing is user-confirmed in r16. The user subsequently
+confirmed they left the view or removed the headset when it stopped; that
+immersive-view closure is not evidence of a spontaneous crash. The separate
+VC2013 plugin errors still require the corrected-runtime retest, and full-session
+stability is not established.
 
 
 The user confirms Windlands works in r15b after a long startup, and The Lab also
