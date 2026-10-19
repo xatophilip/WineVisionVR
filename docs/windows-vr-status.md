@@ -2,6 +2,26 @@
 
 ## Startup performance follow-up (2026-10-19)
 
+The combined r18 signed build from `a08e0a25126dc831b696b4515ad0027a658f9b7e`
+passes the canonical resource/guest validators and full signed-package audit.
+Its two freshly built ARM64EC VC2013 modules receive new complete canonical
+guest/resource-stage receipts; every original core runtime/resource byte stays
+bound to its original build. This is not an overlay onto old resource receipts
+or a rebuild of the 19 native archives. Host startup/signal code is unchanged
+from r17. All 26 imports of the actual retrieved Tilt Brush drawing plugin,
+including 17 MSVCR120 imports, resolve against the new runtime closure.
+
+App UUID: `F47BB23C-1F99-3D35-8B80-4E6DEE341C28`; plugin UUID:
+`B7C71508-BB34-3B6C-A315-7E44BD5213BC`.
+`compatibility-vc2013-oct19-r18/verified-app-complete.json` SHA-256:
+`0f0f578aa390e7c645911f28cb1e3d4a983d841e76f33fec082d9d51c3d4e0e5`.
+The attempted r18 installation times out with a remote tunnel connection error;
+a follow-up reports the peer unreachable. Installation and physical signal,
+loading-time and drawing checks remain pending. The earlier installed r17's
+physical diagnostic also remains unexecuted because the headset was locked.
+No successful startup speedup or repaired Tilt Brush drawing is claimed.
+
+
 The guarded follow-up r17 builds, signs and passes strict package validation
 from `3c7f1e118ecc6e9fe89252863a175b4c1d57e261` (app UUID
 `6216328C-A22E-3C47-B618-88A497572E2B`). Installation succeeds, but its

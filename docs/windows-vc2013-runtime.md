@@ -46,3 +46,11 @@ Both DLLs report raw PE machine `0x8664` with valid CHPE version 2 metadata, ide
 The full local evidence is retained outside Git in `/Volumes/XRDev/build/WineVisionVR/vc2013-oct19/`: `build-inputs.json`, `build-result.json`, and `guest-modules-audit.json` (audit SHA-256 `ae3081bfcd869b0f9c642e92bc91a658a3296a3965c851001e02c3b3789e0b33`). Stripping or staging changes artifact hashes and must receive its own binding.
 
 After packaging, retest a brush stroke on Vision Pro and verify that the `MSVCR120.dll` bad-format, native plugin load and resulting brush null exceptions disappear. The successful compile and import audit do not yet prove that result.
+
+## Combined signed package checkpoint
+
+The actual device plugin was subsequently retrieved successfully after using the installed directory capitalization `TiltBrush_Data`. All 26 imports (17 from MSVCR120 and nine from kernel32) resolve against the genuine new CRT and existing ARM64EC package. The previous failed system32 symlink read remains preserved; this does not retroactively claim that leaf was copied.
+
+The signed r18 package from a08e0a25126dc831b696b4515ad0027a658f9b7e passes canonical new guest-receipt generation, fresh transactional resource staging and full package validation. Only the two new guest DLLs and their newly generated closure/asset receipts differ in the resource payload. The existing native archives are unchanged; host code matches the preceding guarded-signal build. Raw build hashes above are not reused as stripped/staged DLL hashes: the r18 pipeline records and verifies each stage separately.
+
+The r18 installation attempt fails when the headset becomes unreachable. Matching DLLs are therefore not yet a verified headset drawing repair. Evidence: compatibility-vc2013-oct19-r18/verified-app-complete.json, SHA-256 0f0f578aa390e7c645911f28cb1e3d4a983d841e76f33fec082d9d51c3d4e0e5, plus its successful and failed command receipts.
