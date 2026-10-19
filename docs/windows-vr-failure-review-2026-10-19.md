@@ -1,5 +1,10 @@
 # Recent game failures and local fixes — 19 October 2026
 
+Deployment update: the combined r20 build from fac9df59 was subsequently built
+from source, signed, independently package-verified and installed in place on
+Vision Pro. The investigation below records the pre-deployment findings; no new
+r20 gameplay pass is claimed. See [current status](windows-vr-status.md).
+
 ## Scope and installed baseline
 
 Reviewed the newest 20 retained session journals, current/rotated runtime logs,

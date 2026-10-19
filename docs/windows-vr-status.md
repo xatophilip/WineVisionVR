@@ -1,8 +1,18 @@
 # Windows VR implementation status
 
-Pending source repairs for the latest Lab and Fantastic Contraption failures are
-tracked in [the 19 October failure review](windows-vr-failure-review-2026-10-19.md).
-They pass targeted local checks but are not installed or headset-verified.
+The r20 update from fac9df59b32634c7f2505d596c798fbc215850ff was installed in
+place on Vision Pro on 19 October after a full source build and independent
+package review. App UUID: D662978C-C140-3DB4-BCF1-99EAC683C7D5; runtime plugin:
+C501EEB3-02E2-301C-8D93-C56D8BAD1B25. All 1,126 package files, signatures,
+new native/FEX fixes, all three guest pairs and video/CRT dependencies were
+verified. Receipt SHA-256:
+5af7b209fad38df8894f1bb684c597da614e281eeea160b3647f95742a86a228.
+Installation succeeded without uninstalling the main app. Headset execution
+and new gameplay results are pending; the PASS results below belong to r19.
+
+See [the failure review](windows-vr-failure-review-2026-10-19.md) for the changes.
+First test: the built-in VR cube, followed by Windlands. Then retest Fantastic
+Contraption and The Lab; their fixes are not yet gameplay-confirmed.
 
 ## Queue-fix headset retest (2026-10-19)
 
