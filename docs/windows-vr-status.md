@@ -25,12 +25,25 @@ no previous native-plugin/DllNotFound exception cascade. Its render counters
 show an unresolved frame-handoff problem: from 18:59:25 to 18:59:30 the game
 completes another 222 frames while the display acquires zero, with three queued
 frames, increasing drops and zero GPU failures. This is not a smooth/stable
-painting pass. The precise wraparound symptom awaits clarification. A bounded
-queue repair is under investigation and is not included in this installed build.
+painting pass. The user clarifies the scene is cut off or missing when turning their head.
+Stale-frame reprojection is a plausible contributor; projection correctness has
+not been established. The bounded queue repair described below is tested locally
+and is not included in this installed r18 build.
 
 Evidence: `headset-oct19-r18-retest/` on the local build volume. Early launch
 requests that activated an existing Tilt Brush process are excluded from the
 cold signal diagnostic; failed/empty file transfers are not timing evidence.
+The source queue repair retains up to six pending frames, matching the existing
+six-ticket completion bound. Full-window backpressure rejects a new submission
+without retiring unfinished frames; the producer already treats this as a
+nonfatal dropped submission. GPU-ready acquisition, texture leases, target
+validation, completion ordering and the ABI remain unchanged. An actual Metal
+regression reproduces the starvation with the exact previous bridge and passes
+with the patch. It also checks both submission ABIs, six-ticket backpressure,
+recovery, pause and out-of-order lease release. Existing compositor tests and all
+720 completion orders pass. This is a local correctness result, not a headset
+smoothness or wraparound fix confirmation. Build/deploy and retest remain pending.
+
 The following paragraphs preserve the earlier build and connection history.
 
 The combined r18 signed build from `a08e0a25126dc831b696b4515ad0027a658f9b7e`

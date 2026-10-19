@@ -50,3 +50,19 @@ Fresh Windlands PID 611 accepts runtime launch at 18:56:10.452, with 65 submitte
 Tilt Brush reaches Standard and paints according to the user, but its display handoff remains jerky despite ongoing guest completion. In one five-second window, 222 guest frames complete and no new frames are acquired for display. The three-slot queue stays full and frames are dropped. A queue-overflow/readiness issue is under investigation; this installed package does not include that proposed repair. User-reported wraparound behavior is also unresolved.
 
 Raw successful and failed command receipts and logs remain in `/Volumes/XRDev/build/WineVisionVR/headset-oct19-r18-retest`. Only successful nonempty captures support these measurements.
+
+## Bounded frame-handoff repair, locally tested
+
+Tilt Brush's captured producer latency exceeds three frame submissions: around 61 ms queued plus 12 ms GPU time at about 44 frames/s. The previous three-slot queue could discard every frame before its producer event signaled. Acquisition correctly refuses unfinished work, so simply waiting on the display thread would stall head tracking.
+
+The queue now retains up to the existing six-ticket completion-window capacity. The outstanding-ticket bound remains six. A full pending window applies the existing nonfatal backpressure before allocating a ticket; it no longer drops the oldest unfinished frame to make room. This preserves bounded resource ownership, producer readiness checks, texture leases and ordered consumer completion. No field-of-view or projection matrix change is included.
+
+The regression uses the actual production Objective-C++ bridge with real Metal textures/events and GPU command buffers. With the exact prior bridge, a frame finishing after the fourth submission has already been evicted and the test fails. The new bridge passes that case, full-window recovery, both V1/V2 APIs, out-of-order lease release, pause and stale-generation rejection. Existing compositor checks and the completion-window test (720 orders plus duplicate and boundary cases) also pass.
+
+Reproduce on a Metal-capable Mac:
+
+```sh
+python3 windows-vr-tools/test_compositor_backpressure.py --build /path/to/fresh/external/test-output
+```
+
+The runner can accept an immutable prior bridge source with `--baseline-source` to verify the expected original failure. Captured evidence is under `/Volumes/XRDev/build/WineVisionVR/compositor-backpressure-oct19/reviewed-contract/result.json`. Production bridge syntax/type checking against the actual visionOS 27 SDK also passes (`reviewed-contract/visionos-syntax-result.json`). These checks establish the queue repair locally; they do not prove headset frame rate or resolve the user-reported missing scene when turning the head. The installed r18 app does not yet contain the queue patch.

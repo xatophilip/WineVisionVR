@@ -102,9 +102,15 @@ bool eventUsable(id<MTLSharedEvent> event, id<MTLDevice> device) {
     return owner == nil || owner == device;
 }
 
-constexpr size_t kQueueCapacity = 3;
-constexpr uint64_t kMaxOutstandingTickets = kQueueCapacity * 2;
-static_assert(kMaxOutstandingTickets == kWVRCompletionWindowCapacity);
+// Allow the full existing six-ticket completion window in the pending queue.
+// A three-slot queue evicted frames before their producer fence completed when
+// GPU latency exceeded three submissions, starving a healthy display. Acquire
+// still discards older frames when a newer GPU-ready frame can replace them.
+// Full-window submissions already return NoFrameAvailable (DXMT S_FALSE / XR
+// success): bounded backpressure retains pending work instead of discarding it.
+constexpr size_t kQueueCapacity = kWVRCompletionWindowCapacity;
+constexpr uint64_t kMaxOutstandingTickets = kWVRCompletionWindowCapacity;
+static_assert(kQueueCapacity == kMaxOutstandingTickets);
 
 struct QueuedFrame {
     uint64_t ticket = 0;
@@ -379,7 +385,7 @@ int32_t submitStereoFrame(const WVRSubmitStereoFrameV1 *frame,
         return WVRCompositorStatusNoFrameAvailable;
     }
 
-    if (bridge.count == kQueueCapacity) dropHeadLocked(bridge);
+    assert(bridge.count < kQueueCapacity); // guarded by the unretired-ticket limit above
     const size_t tail = (bridge.head + bridge.count) % kQueueCapacity;
     QueuedFrame &slot = bridge.queue[tail];
     slot.ticket = bridge.nextTicket++;
@@ -669,7 +675,7 @@ static int32_t submitStereoFrameV2Impl(const WVRSubmitStereoFrameV2 *frame, uint
     if (bridge.sessionExitRequested) { os_unfair_lock_unlock(&bridge.lock); return WVRCompositorStatusNoFrameAvailable; }
     wvr_guest_foveation_register_eye_v1(0, frame->leftTexture, frame->leftSlice, frame->leftX, frame->leftY, frame->leftWidth, frame->leftHeight);
     wvr_guest_foveation_register_eye_v1(1, frame->rightTexture, frame->rightSlice, frame->rightX, frame->rightY, frame->rightWidth, frame->rightHeight);
-    if (bridge.count == kQueueCapacity) dropHeadLocked(bridge);
+    assert(bridge.count < kQueueCapacity); // guarded by the unretired-ticket limit above
     const size_t tail = (bridge.head + bridge.count) % kQueueCapacity;
     QueuedFrame &slot = bridge.queue[tail];
     slot.ticket = bridge.nextTicket++;
