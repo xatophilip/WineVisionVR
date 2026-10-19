@@ -2,6 +2,16 @@
 
 ## Startup performance follow-up (2026-10-19)
 
+The signed r16 update installs and its corrected two-exception debugger policy
+is accepted. Physical Windlands testing still shows a 54.664-second pause;
+first loading frames at 30 seconds are followed by usable rendering around
+90 seconds. The user confirms the loading screen glitches, then the game works.
+No startup speedup is claimed. A guarded SOFTWARE-policy follow-up and explicit
+native signal-delivery diagnostic are tested locally and awaiting signed/device
+validation. Tilt Brush drawing is user-confirmed in r16, followed by a stop;
+full-session stability is not established.
+
+
 The user confirms Windlands works in r15b after a long startup, and The Lab also
 runs but takes too long to appear. The user clarifies startup time is the main
 complaint. The Lab's sampled post-load frame rates do not establish loading speed.

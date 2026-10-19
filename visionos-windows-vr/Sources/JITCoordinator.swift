@@ -9,10 +9,11 @@ import WindowsVRCore
 @MainActor
 final class JITCoordinator {
     enum Failure: LocalizedError {
-        case helperUnavailable, scriptMissing, invalidRequest, attachmentTimedOut
+        case helperUnavailable, scriptMissing, invalidRequest, attachmentTimedOut, signalProbeFailed
 
         var errorDescription: String? {
             switch self {
+            case .signalProbeFailed: return "Debugger signal self-test failed. Force quit WineVision and restart before launching a game."
             case .helperUnavailable: return L("Install and configure StikDebug for visionOS before starting a Windows game.", "Installiere und konfiguriere StikDebug für visionOS, bevor du ein Windows-Spiel startest.")
             case .scriptMissing: return L("The Madeira JIT protocol script is missing from this app.", "Das Madeira-JIT-Protokollskript fehlt in dieser App.")
             case .invalidRequest: return L("The app could not create its debugger request.", "Die App konnte die Debugger-Anfrage nicht erstellen.")
@@ -21,7 +22,10 @@ final class JITCoordinator {
         }
     }
 
+    private static var signalProbeFailed = false
+
     func prepareDebugger() async throws {
+        guard !Self.signalProbeFailed else { throw Failure.signalProbeFailed }
         // An arbitrary Xcode debugger cannot service Madeira's custom BRK
         // protocol. Always request the script-capable helper, even if traced.
         let scheme = ["stikdebug", "stikjit"].first { candidate in
@@ -33,7 +37,8 @@ final class JITCoordinator {
         guard let scriptURL = Bundle.main.url(forResource: "madeira-jit", withExtension: "js") else {
             throw Failure.scriptMissing
         }
-        let script = MadeiraDebuggerScript.compose(upstream: try Data(contentsOf: scriptURL))
+        let softwareSafe = MadeiraDebuggerScript.softwareExceptionsAreSafe()
+        let script = MadeiraDebuggerScript.compose(upstream: try Data(contentsOf: scriptURL), softwareExceptionsSafe: softwareSafe)
         var components = URLComponents()
         components.scheme = scheme
         components.host = "enable-jit"
@@ -56,6 +61,14 @@ final class JITCoordinator {
         while ContinuousClock.now < deadline {
             try Task.checkCancellation()
             if Self.isDebuggerAttached() {
+                if ProcessInfo.processInfo.arguments.contains("--jit-signal-self-test") {
+                    let result = debuggerSignalProbeRun()
+                    log.notice("JIT: explicit signal self-test result=\(result), software policy eligible=\(softwareSafe)")
+                    guard result == 0 else {
+                        Self.signalProbeFailed = true
+                        throw Failure.signalProbeFailed
+                    }
+                }
                 log.notice("JIT: debugger attached after \(started.duration(to: .now))")
                 return
             }
