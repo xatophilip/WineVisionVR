@@ -2,6 +2,37 @@
 
 ## Startup performance follow-up (2026-10-19)
 
+The later physical r18 retest succeeds after the developer connection is restored.
+The exact previously audited package installs at bundle location
+`030C5C38-82A8-4315-8A79-91228F9901EC`. A cold process (PID 605), launched
+only after the preceding WineVision process is confirmed absent, reports
+`JIT: explicit signal self-test result=0, software policy eligible=true`.
+The cube then advances from 142 to 1,493 submitted frames, with two valid eyes,
+zero captured GPU failures and about 89.9 new frames/s in the final sample.
+This confirms actual signal delivery as well as the native JIT breakpoint path.
+
+A fresh Windlands process (PID 611) accepts runtime launch at 18:56:10.452.
+The first positive sampled counter is 65 frames at 18:56:25.353, within 14.901 s;
+it advances to 320 at 18:56:30.364 and 1,636 at 18:56:50.387. The previous
+roughly 54-second whole-process pause does not recur in this capture. The user
+confirms a visible menu/game. These are frame-arrival measurements, not an exact
+menu-appearance timestamp or a repeated benchmark. The r16 comparison had two
+loading frames around 30 s and sustained rendering around 90 s.
+
+Tilt Brush reaches Unity `Standard`; the user confirms it paints, but reports
+jerkiness and that it does not wrap around properly. The captured Unity log has
+no previous native-plugin/DllNotFound exception cascade. Its render counters
+show an unresolved frame-handoff problem: from 18:59:25 to 18:59:30 the game
+completes another 222 frames while the display acquires zero, with three queued
+frames, increasing drops and zero GPU failures. This is not a smooth/stable
+painting pass. The precise wraparound symptom awaits clarification. A bounded
+queue repair is under investigation and is not included in this installed build.
+
+Evidence: `headset-oct19-r18-retest/` on the local build volume. Early launch
+requests that activated an existing Tilt Brush process are excluded from the
+cold signal diagnostic; failed/empty file transfers are not timing evidence.
+The following paragraphs preserve the earlier build and connection history.
+
 The combined r18 signed build from `a08e0a25126dc831b696b4515ad0027a658f9b7e`
 passes the canonical resource/guest validators and full signed-package audit.
 Its two freshly built ARM64EC VC2013 modules receive new complete canonical
@@ -15,11 +46,9 @@ App UUID: `F47BB23C-1F99-3D35-8B80-4E6DEE341C28`; plugin UUID:
 `B7C71508-BB34-3B6C-A315-7E44BD5213BC`.
 `compatibility-vc2013-oct19-r18/verified-app-complete.json` SHA-256:
 `0f0f578aa390e7c645911f28cb1e3d4a983d841e76f33fec082d9d51c3d4e0e5`.
-The attempted r18 installation times out with a remote tunnel connection error;
-a follow-up reports the peer unreachable. Installation and physical signal,
-loading-time and drawing checks remain pending. The earlier installed r17's
-physical diagnostic also remains unexecuted because the headset was locked.
-No successful startup speedup or repaired Tilt Brush drawing is claimed.
+The initial attempted r18 installation times out with a remote tunnel error;
+the later successful retest above supersedes that pending checkpoint. The earlier
+r17 diagnostic did not execute while the headset was locked.
 
 
 The guarded follow-up r17 builds, signs and passes strict package validation
@@ -33,7 +62,8 @@ Tilt Brush's drawing plugin also has a separate concrete VC2013 architecture
 closure gap. The normal guest recipe now includes its missing ARM64EC CRTs;
 both actual modules compile and all 339 imported symbols resolve locally.
 See [the dependency evidence and reproducible build](windows-vc2013-runtime.md).
-Physical corrected-plugin drawing remains pending packaging and retest.
+The later r18 headset retest above confirms drawing, with separate rendering
+jerkiness and wraparound issues still unresolved.
 
 
 The signed r16 update installs and its corrected two-exception debugger policy

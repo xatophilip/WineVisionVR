@@ -40,3 +40,13 @@ An explicit --jit-signal-self-test is provided for a fresh process before any Wi
 Actual local Darwin tests cover both real signals, custom/blocked eligibility rejection, complete action/mask preservation, real owned exception-port installation/restoration and send-right balance. A controlled held-signal test exercises the actual C failure path and real late delivery into retained benign handlers. Both policy choices execute the actual upstream JavaScript in 72 scenario/mode comparisons. These host tests do not establish physical signal delivery or a faster game start: the signed build must run its explicit signal diagnostic and real JIT cube before a new Windlands/The Lab timing comparison.
 
 The user also confirms Tilt Brush accepted drawing in r16, then stopped. Its last capture shows about 31–38 new frames/s before the app backgrounds and the renderer is invalidated at 13:57:45. Repeated guest exceptions are retained for diagnosis; whether the view closed by user action or on its own remains unconfirmed. This is partial drawing evidence, not a stable-session pass.
+
+## Physical r18 retest
+
+The later installed combined package from `a08e0a25126dc831b696b4515ad0027a658f9b7e` passes the explicit real signal diagnostic in a verified fresh PID 605: result 0, SOFTWARE policy eligible true. Its cube produces stereo frames with zero sampled GPU failures and about 89.9 new frames/s. The native JIT breakpoint/arena path also executes. This supersedes the earlier locked/unreachable test checkpoint.
+
+Fresh Windlands PID 611 accepts runtime launch at 18:56:10.452, with 65 submitted frames sampled at 18:56:25.353 (14.901 s), 320 at 18:56:30.364 and 1,636 at 18:56:50.387. The user confirms the menu/game is visible. The old roughly 54-second gap does not appear. Do not report this as an exact 15-second menu load: it is the upper bound for the first positive sampled frame counter. The r16 reference had two loading frames around 30 s and sustained game rendering around 90 s. This is one comparative run, without repeated cold/warm cache controls.
+
+Tilt Brush reaches Standard and paints according to the user, but its display handoff remains jerky despite ongoing guest completion. In one five-second window, 222 guest frames complete and no new frames are acquired for display. The three-slot queue stays full and frames are dropped. A queue-overflow/readiness issue is under investigation; this installed package does not include that proposed repair. User-reported wraparound behavior is also unresolved.
+
+Raw successful and failed command receipts and logs remain in `/Volumes/XRDev/build/WineVisionVR/headset-oct19-r18-retest`. Only successful nonempty captures support these measurements.

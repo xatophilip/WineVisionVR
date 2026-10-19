@@ -53,4 +53,10 @@ The actual device plugin was subsequently retrieved successfully after using the
 
 The signed r18 package from a08e0a25126dc831b696b4515ad0027a658f9b7e passes canonical new guest-receipt generation, fresh transactional resource staging and full package validation. Only the two new guest DLLs and their newly generated closure/asset receipts differ in the resource payload. The existing native archives are unchanged; host code matches the preceding guarded-signal build. Raw build hashes above are not reused as stripped/staged DLL hashes: the r18 pipeline records and verifies each stage separately.
 
-The r18 installation attempt fails when the headset becomes unreachable. Matching DLLs are therefore not yet a verified headset drawing repair. Evidence: compatibility-vc2013-oct19-r18/verified-app-complete.json, SHA-256 0f0f578aa390e7c645911f28cb1e3d4a983d841e76f33fec082d9d51c3d4e0e5, plus its successful and failed command receipts.
+The initial r18 installation attempt fails when the headset becomes unreachable. The later retest installs the exact audited package successfully; see the physical result below. Evidence: compatibility-vc2013-oct19-r18/verified-app-complete.json, SHA-256 0f0f578aa390e7c645911f28cb1e3d4a983d841e76f33fec082d9d51c3d4e0e5, plus its successful and failed command receipts.
+
+## Physical drawing retest
+
+The exact r18 package subsequently installs on Vision Pro. Tilt Brush reaches Unity Standard, and the user confirms it paints. The successful current Unity capture (`headset-oct19-r18-retest/tilt-unity-1.txt`, SHA-256 `1c117a3e39d78cc01f0d446e6b4749d6daaed63775fb86d1e3ef1a03007573e9`) does not show the previous TiltBrushCpp/DllNotFound/null-exception cascade. Full native loader captures in this retest fail or end before the decisive plugin load, so no uncaptured loader success line is claimed.
+
+The user reports jerkiness and a wraparound issue. Rendering counters independently show frame-handoff starvation while the game continues completing frames; this remains separate from the CRT repair. Drawing functionality is confirmed, but smoothness, prolonged stability and wraparound correctness are not.
