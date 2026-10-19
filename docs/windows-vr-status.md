@@ -2,6 +2,20 @@
 
 ## Startup performance follow-up (2026-10-19)
 
+The guarded follow-up r17 builds, signs and passes strict package validation
+from `3c7f1e118ecc6e9fe89252863a175b4c1d57e261` (app UUID
+`6216328C-A22E-3C47-B618-88A497572E2B`). Installation succeeds, but its
+explicit signal/cube launch times out while the device reports passcode required.
+The subsequent captured launcher file contains only earlier r16 activity;
+it is not a successful r17 signal or rendering test.
+
+Tilt Brush's drawing plugin also has a separate concrete VC2013 architecture
+closure gap. The normal guest recipe now includes its missing ARM64EC CRTs;
+both actual modules compile and all 339 imported symbols resolve locally.
+See [the dependency evidence and reproducible build](windows-vc2013-runtime.md).
+Physical corrected-plugin drawing remains pending packaging and retest.
+
+
 The signed r16 update installs and its corrected two-exception debugger policy
 is accepted. Physical Windlands testing still shows a 54.664-second pause;
 first loading frames at 30 seconds are followed by usable rendering around

@@ -87,7 +87,7 @@ if ! grep -Fq 'programs/wineboot/arm64ec-windows/wineboot.exe:' "$wine_build/Mak
 fi
 bash "$runtime_root/build/wine-pe/build-ntdll.sh"
 JOBS="${AVPPLAY_BUILD_JOBS:-4}" bash "$runtime_root/build/wine-pe/build-modules.sh" \
-    cryptsp crypt32 cryptbase rsaenh d3dx11_43 msvcp110 msvcr110 xaudio2_7 \
+    cryptsp crypt32 cryptbase rsaenh d3dx11_43 msvcp110 msvcr110 msvcp120 msvcr120 xaudio2_7 \
     kernel32 kernelbase advapi32 shell32 shlwapi version user32 gdi32 \
     setupapi newdev wininet ws2_32 ole32 rpcrt4 secur32 bcrypt msvcrt winmm \
     apisetschema mswsock dnsapi iphlpapi winhttp \
