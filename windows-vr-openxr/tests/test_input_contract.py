@@ -25,6 +25,7 @@ preamble = r'''
 #include <cstdio>
 #include <cstdint>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -41,11 +42,13 @@ struct Session {Instance* instance;std::atomic<XrSessionState> state{XR_SESSION_
 Instance* GetInstance(XrInstance h){return reinterpret_cast<Instance*>(h);}
 Action* GetAction(XrAction h){return reinterpret_cast<Action*>(h);}
 ActionSet* GetActionSet(XrActionSet h){return reinterpret_cast<ActionSet*>(h);}
-void TraceLine(const char*){}
+std::vector<std::string> traceLines;
+void TraceLine(const char* line){traceLines.emplace_back(line);}
 struct WVRDXMTHapticV1 {uint32_t role;float amplitude,frequencyHz,durationSeconds;};
 std::vector<WVRDXMTHapticV1> sentHaptics;
 Session* GetSession(XrSession h){return reinterpret_cast<Session*>(h);}
-int SubmitSessionHaptic(Session*,const WVRDXMTHapticV1* request){sentHaptics.push_back(*request);return 0;}
+bool failHapticSubmit=false;
+int SubmitSessionHaptic(Session*,const WVRDXMTHapticV1* request){if(failHapticSubmit)return -1;sentHaptics.push_back(*request);return 0;}
 ControllerSample sampledControllers;
 bool failControllerRead=false;
 unsigned observeCalls=0;
@@ -58,7 +61,8 @@ int GetSessionController(Session*,uint32_t role,WVRDXMTControllerV1* out){if(fai
 #define FAILED(result) ((result)<0)
 uint64_t ButtonForBinding(const std::string&);
 '''
-functions = [function(x) for x in [
+haptic_enum = source[source.index('enum HapticTracePhase :'):source.index('XrResult HapticResult(')]
+functions = [haptic_enum, function('XrResult HapticResult(')] + [function(x) for x in [
     'bool AnalogBinding(', 'uint32_t RoleForPath(', 'XrPath UserPathForRole(', 'bool ActionAllowsRole(',
     'void CompileActionBindings(', 'bool ActionHasBindingForRole(', 'uint64_t ButtonForBinding(const std::string &binding) {',
     'ActionValue SampleAction(', 'void UpdateActionSnapshot(', 'bool ControllerConnected(', 'bool ActionSetIsActive(', 'bool ActionSetRoleIsActive(', 'XrResult XRAPI_CALL SyncActions(', 'XrResult GetActionSnapshot(',
@@ -241,7 +245,72 @@ int main(){
  assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_SUCCESS);
  assert(sentHaptics.size()==1&&sentHaptics[0].role==1);
 
- puts("PASS: production input values, multi-hand synchronization, duplicate/wildcard union, transactional validation, focus, hand isolation, profiles, menus and haptic routing");
+
+ // Khronos haptic semantics: valid requests need no physical output device.
+ // Exercise the actual production functions, with only transport replaced.
+ sentHaptics.clear();pulse.amplitude=.7f;pulse.frequency=120;pulse.duration=1000000;
+ auto unboundHaptic=action(XR_ACTION_TYPE_VIBRATION_OUTPUT);unboundHaptic->subactionPaths={left};
+ hapticInfo.action=reinterpret_cast<XrAction>(unboundHaptic);hapticInfo.subactionPath=left;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_SUCCESS);
+ assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_SUCCESS&&sentHaptics.empty());
+ // No binding is different from an explicitly undeclared subaction path.
+ hapticInfo.subactionPath=right;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_PATH_UNSUPPORTED);
+ assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_ERROR_PATH_UNSUPPORTED);
+ hapticInfo.action=reinterpret_cast<XrAction>(vibration);hapticInfo.subactionPath=left;
+ for(auto state:{XR_SESSION_STATE_READY,XR_SESSION_STATE_VISIBLE,XR_SESSION_STATE_STOPPING}){
+   session.state=state;
+   assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_SESSION_NOT_FOCUSED);
+   assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_SESSION_NOT_FOCUSED&&sentHaptics.empty());
+ }
+ // Validation must remain effective even when unfocused (and no output occurs).
+ pulse.amplitude=2;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_VALIDATION_FAILURE);
+ pulse.amplitude=.7f;session.state=XR_SESSION_STATE_FOCUSED;
+ pulse.duration=-2;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_VALIDATION_FAILURE);
+ pulse.duration=1000000;pulse.frequency=std::numeric_limits<float>::quiet_NaN();
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_VALIDATION_FAILURE);
+ pulse.frequency=120;pulse.amplitude=std::numeric_limits<float>::infinity();
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_VALIDATION_FAILURE);
+ pulse.amplitude=.7f;hapticInfo.action=reinterpret_cast<XrAction>(axis);
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_ACTION_TYPE_MISMATCH);
+ assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_ERROR_ACTION_TYPE_MISMATCH);
+ hapticInfo.action=XR_NULL_HANDLE;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_HANDLE_INVALID);
+ assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_ERROR_HANDLE_INVALID);
+ hapticInfo.action=reinterpret_cast<XrAction>(vibration);
+ assert(ApplyHapticFeedback(XR_NULL_HANDLE,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_HANDLE_INVALID);
+ assert(StopHapticFeedback(XR_NULL_HANDLE,&hapticInfo)==XR_ERROR_HANDLE_INVALID);
+ failHapticSubmit=true;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_ERROR_RUNTIME_FAILURE);
+ assert(StopHapticFeedback(sessionHandle,&hapticInfo)==XR_ERROR_RUNTIME_FAILURE&&sentHaptics.empty());
+ failHapticSubmit=false;
+ assert(ApplyHapticFeedback(sessionHandle,&hapticInfo,reinterpret_cast<XrHapticBaseHeader*>(&pulse))==XR_SUCCESS);
+ assert(sentHaptics.size()==1&&sentHaptics[0].role==0);
+
+
+ // Check actual entry points identify the error before testing helper bounds.
+ auto traced=[&](const char* text){return std::any_of(traceLines.begin(),traceLines.end(),[&](const auto& line){return line.find(text)!=std::string::npos;});};
+ assert(traced("haptic-apply phase=vibration result=-1 detail=-2"));
+ assert(traced("haptic-apply phase=subaction result=-22"));
+ assert(traced("haptic-apply phase=focus result=8"));
+ assert(traced("haptic-apply phase=bridge result=-2 detail=-1"));
+ // Diagnostics run only for exceptional results and are bounded per phase/op.
+ traceLines.clear();
+ for(int n=0;n<2048;++n)assert(HapticResult(false,HapticStructure,XR_SUCCESS)==XR_SUCCESS);
+ assert(traceLines.empty());
+ for(int n=0;n<1024;++n)assert(HapticResult(false,HapticBridge,XR_ERROR_RUNTIME_FAILURE,-7)==XR_ERROR_RUNTIME_FAILURE);
+ // Earlier transport-failure check consumed count1; this adds2..1025:
+ // seven initial records, then512 and1024. Other phases cannot suppress this.
+ assert(traceLines.size()==9);
+ assert(traceLines.front().find("haptic-apply phase=bridge result=-2 detail=-7")!=std::string::npos);
+ assert(traceLines.back().find("count=1024")!=std::string::npos);
+ traceLines.clear();
+ assert(HapticResult(true,HapticStructure,XR_ERROR_VALIDATION_FAILURE)==XR_ERROR_VALIDATION_FAILURE);
+ assert(traceLines.size()==1&&traceLines[0].find("haptic-stop phase=structure result=-1")!=std::string::npos);
+
+ puts("PASS: production input values, multi-hand synchronization, duplicate/wildcard union, transactional validation, focus, hand isolation, profiles, menus, haptic routing, unfocused/unbound outputs and preserved error validation");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wvr-input-') as work:

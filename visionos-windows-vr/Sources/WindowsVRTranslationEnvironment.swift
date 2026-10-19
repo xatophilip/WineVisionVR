@@ -13,7 +13,10 @@ enum WindowsVRTranslationEnvironment {
         // Explicit environment overrides still allow controlled comparisons.
         "FEX_ENABLECODECACHINGWIP": "0",
         "FEX_ENABLELAZYCODECACHINGWIP": "0",
-        "FEX_ENABLECODECACHEVALIDATION": "0"
+        "FEX_ENABLECODECACHEVALIDATION": "0",
+        // A first fatal fault can otherwise synchronously write a 640 MiB
+        // sparse JIT image. Keep compact fault logs; opt in to full dumps.
+        "MADEIRA_JIT_DUMP": "0"
     ]
 
     static func applyDefaults() {

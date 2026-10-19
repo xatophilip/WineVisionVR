@@ -348,8 +348,12 @@ final class SessionDiagnostics: @unchecked Sendable {
         let last = try sample(handle, offset: bytes - UInt64(Self.tailBytes), count: Self.tailBytes)
         // Drop partial lines at truncation boundaries so a secret value cannot
         // survive without the sensitive key that was outside the retained range.
+        // Swift treats CRLF as one Character, so searching for a standalone
+        // newline would discard both samples of a normal Windows log.
         let firstText = String(decoding: first, as: UTF8.self)
+            .replacingOccurrences(of: "\r\n", with: "\n")
         let lastText = String(decoding: last, as: UTF8.self)
+            .replacingOccurrences(of: "\r\n", with: "\n")
         let head = firstText.lastIndex(of: "\n").map { String(firstText[...$0]) } ?? ""
         let tail = lastText.firstIndex(of: "\n").map { String(lastText[lastText.index(after: $0)...]) } ?? ""
         return Log(name: source.label, startup: Self.clean(head, limit: Self.headBytes),

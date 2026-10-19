@@ -1,0 +1,34 @@
+--- a/OpenOVR/Reimpl/BaseInput.cpp
++++ b/OpenOVR/Reimpl/BaseInput.cpp
+@@ -22,6 +22,7 @@
+ #include <filesystem>
+ #include <glm/gtc/matrix_inverse.hpp>
+ #include <locale>
++#include <limits>
+ #include <map>
+ #include <math.h>
+ #include <numbers>
+@@ -2268,6 +2269,14 @@
+ 		OOVR_ABORTF("Cannot trigger vibration on non-vibration (type=%d) action '%s'", static_cast<int>(act->type), act->fullName.c_str());
+ 	}
+ 
++	// XrDuration is signed 64-bit nanoseconds. Check the exclusive 2^63
++	// boundary as a double; converting INT64_MAX to double rounds up to it.
++	const double durationNanoseconds = static_cast<double>(fDurationSeconds) * 1000000000.0;
++	if (!std::isfinite(durationNanoseconds) || durationNanoseconds < 0.0 ||
++	    durationNanoseconds >= std::ldexp(1.0, std::numeric_limits<XrDuration>::digits)) {
++		return vr::VRInputError_InvalidParam;
++	}
++
+ 	// TODO check the subaction stuff works properly
+ 	XrPath subactionPath = XR_NULL_PATH;
+ 	if (ulRestrictToDevice != vr::k_ulInvalidInputValueHandle) {
+@@ -2286,7 +2295,7 @@
+ 
+ 	XrHapticVibration vibration = { XR_TYPE_HAPTIC_VIBRATION };
+ 	vibration.frequency = fFrequency == 0.0f ? XR_FREQUENCY_UNSPECIFIED : fFrequency;
+-	vibration.duration = (int)(fDurationSeconds * 1000000000.0f);
++	vibration.duration = static_cast<XrDuration>(durationNanoseconds);
+ 	vibration.amplitude = fAmplitude;
+ 
+ 	OOVR_FAILED_XR_ABORT(xrApplyHapticFeedback(xr_session.get(), &info, (XrHapticBaseHeader*)&vibration));

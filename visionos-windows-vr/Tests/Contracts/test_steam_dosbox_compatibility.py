@@ -28,6 +28,12 @@ compatibility = 'nonisolated static func steamCompatibilityEnvironment(' + launc
 # The config must be prepared before credentials are written to the one-use handoff.
 start = launcher.index('let arguments = try SteamDOSBoxCompatibility.prepare(')
 assert start < launcher.index('try MadeiraDock.writeHandoff(', start) < launcher.index('argumentsOverride: arguments',start)
+presentation = 'nonisolated static func steamPresentationMode(' + launcher.split(
+    'nonisolated static func steamPresentationMode(',1)[1].split("    /// The layer a game's Direct3D",1)[0]
+manifest = (ROOT/'windows-vr/Sources/WindowsVRCore/WindowsGameManifest.swift').read_text()
+mode = 'public enum WindowsPresentationMode:' + manifest.split(
+    'public enum WindowsPresentationMode:',1)[1].split('public enum WindowsGameManifestError:',1)[0]
+assert 'Self.steamPresentationMode(appID: game.id, optionType: option?.type)' in launcher
 shell = r'''
 import Foundation
 struct DockGame { var id: Int; var library: String; var installDir: String }
@@ -38,6 +44,16 @@ probe = r'''
 func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
     if try !condition() { fatalError(message) }
 }
+for type: String? in [nil, "", "default", "vr", "othervr"] {
+    try check(CompatibilityProbe.steamPresentationMode(appID:224960,optionType:type) == .desktop,
+              "Tomb Raider must use the flat display even with missing or misleading launch metadata")
+}
+for type: String? in [nil, "vr", "othervr", "VR"] {
+    try check(CompatibilityProbe.steamPresentationMode(appID:428370,optionType:type) == .immersiveVR,
+              "Existing SteamVR routing must remain available")
+}
+try check(CompatibilityProbe.steamPresentationMode(appID:123,optionType:"default") == .desktop,
+          "Explicit flat launch options remain flat")
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
 let fm = FileManager.default
 func write(_ path: URL, _ text: String) throws {
@@ -136,7 +152,7 @@ try JSONSerialization.data(withJSONObject:evidence,options:[.prettyPrinted,.sort
 print("PASS: actual DOSBox adapter/resolver, exact arguments/settings, app+option scoping, installed-file preservation, missing content, DOS short-name ambiguity and output symlink rejection")
 try check(caseVariantAccepted, "Legitimate case variant rejected: " + caseVariantError)
 '''
-source=shell+resolver+helper+'\nenum CompatibilityProbe {\n'+compatibility+'\n}\n'+probe
+source=shell+mode+resolver+helper+'\nenum CompatibilityProbe {\n'+compatibility+presentation+'\n}\n'+probe
 unit=scratch/'main.swift';binary=scratch/'probe';unit.write_text(source)
 command=['xcrun','--sdk','macosx','swiftc','-O','-module-cache-path',str(scratch/'cache'),str(unit),'-o',str(binary)]
 subprocess.run(command,check=True)

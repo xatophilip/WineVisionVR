@@ -79,6 +79,13 @@ def main():
 
     run('packaging', [python, '-m', 'unittest', 'discover', '-s',
                       'windows-vr-tools/tests', '-v'])
+    translation_probe = build / 'translation-environment-probe'
+    translation_probe.unlink(missing_ok=True)
+    run('translation-environment-build', ['xcrun', 'swiftc', '-parse-as-library', '-O',
+         '-module-cache-path', build / 'module-cache',
+         'visionos-windows-vr/Sources/WindowsVRTranslationEnvironment.swift',
+         'visionos-windows-vr/Tests/TranslationEnvironmentTests.swift', '-o', translation_probe])
+    run('translation-environment', [translation_probe])
     run('session-diagnostics', [python, 'visionos-windows-vr/Tests/Contracts/test_session_diagnostics.py',
                                  '--build', build / 'session-diagnostics'])
     run('guest-session-health', [python, 'visionos-windows-vr/Tests/Contracts/test_guest_session_health.py',
@@ -186,10 +193,18 @@ def main():
         run('mouse-activation', [python, 'windows-runtime-plugin/Tests/test_mouse_activation.py',
                                    '--runtime-source', runtime_source,
                                    '--build', build / 'mouse-activation'])
+        run('fex-virtual-protect', [python, 'windows-runtime-plugin/Tests/test_fex_virtual_protect.py',
+                                   '--runtime-source', runtime_source,
+                                   '--output-dir', build / 'fex-virtual-protect'])
+        run('wine-image-exec-failure', [python, 'windows-runtime-plugin/Tests/test_wine_image_exec_failure.py',
+                                        '--runtime-source', runtime_source,
+                                        '--output-dir', build / 'wine-image-exec-failure'])
         run('jit-pool-arbitration', [python, 'windows-vr-openxr/tests/test_jit_pool_arbitration.py',
                                      '--runtime-source', runtime_source,
                                      '--output-dir', build / 'jit-pool-arbitration'])
     else:
+        skip('fex-virtual-protect', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
+        skip('wine-image-exec-failure', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('child-gdi-publication', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('window-parent-cache', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
         skip('mouse-activation', '--runtime-source or AVPPLAY_RUNTIME_SOURCE not supplied; requires prepared Madeira')
@@ -281,6 +296,9 @@ def main():
         skip('wow64-vr-pointers', '--dxmt-wow64-source not supplied; requires legacy WOW64 DXMT')
 
     if args.opencomposite_source:
+        run('opencomposite-haptic-duration', [python, 'windows-vr-openvr/tests/test_haptic_duration.py',
+                                             '--source', args.opencomposite_source.expanduser().resolve(),
+                                             '--build', build / 'opencomposite-haptic-duration'])
         run('opencomposite-base-mip', [python, 'windows-vr-openvr/tests/test_base_mip_swapchain.py',
                                        '--source', args.opencomposite_source.expanduser().resolve(),
                                        '--build', build / 'opencomposite-base-mip'])
@@ -290,6 +308,7 @@ def main():
         run('logger-lifetime', [python, 'windows-vr-openvr/tests/test_logger_lifetime.py',
                                 args.opencomposite_source.expanduser().resolve()])
     else:
+        skip('opencomposite-haptic-duration', '--opencomposite-source not supplied; requires genuine pinned source history')
         skip('logger-lifetime', '--opencomposite-source not supplied; requires the patched overlay')
         skip('opencomposite-base-mip', '--opencomposite-source not supplied; requires the pinned overlay and LLVM-MinGW headers')
 

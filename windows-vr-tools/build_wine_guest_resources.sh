@@ -89,6 +89,7 @@ bash "$runtime_root/build/wine-pe/build-ntdll.sh"
 JOBS="${AVPPLAY_BUILD_JOBS:-4}" bash "$runtime_root/build/wine-pe/build-modules.sh" \
     cryptsp crypt32 cryptbase rsaenh d3dx11_43 msvcp110 msvcr110 msvcp120 msvcr120 xaudio2_7 \
     kernel32 kernelbase advapi32 shell32 shlwapi version user32 gdi32 \
+    msvfw32 avifil32 avicap32 \
     setupapi newdev wininet ws2_32 ole32 rpcrt4 secur32 bcrypt msvcrt winmm \
     apisetschema mswsock dnsapi iphlpapi winhttp \
     ucrtbase userenv ntoskrnl.exe cfgmgr32 combase coml2 mpr msacm32 sechost shcore win32u \

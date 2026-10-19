@@ -1,0 +1,39 @@
+--- a/build/ntdll-unix/virtual_ios.c
++++ b/build/ntdll-unix/virtual_ios.c
+@@ -17712,8 +17712,20 @@
+         if (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) vprot |= VPROT_EXEC;
+ 
+         if (!set_vprot( view, ptr + sec[i].VirtualAddress, size, vprot ) && (vprot & VPROT_EXEC))
++        {
++#ifdef WINE_IOS
++            int saved_errno = errno;
++#endif
+             ERR( "failed to set %08x protection on %s section %.8s, noexec filesystem?\n",
+                  sec[i].Characteristics, debugstr_us(nt_name), sec[i].Name );
++#ifdef WINE_IOS
++            /* An unprepared executable image must not reach imports or TLS.
++             * Leave view disposal and descriptor cleanup to virtual_map_image;
++             * published JIT copies retain their existing process lifetime. */
++            status = saved_errno == ENOMEM ? STATUS_NO_MEMORY : STATUS_ACCESS_DENIED;
++            goto done;
++#endif
++        }
+     }
+ 
+ #ifdef VALGRIND_LOAD_PDB_DEBUGINFO
+@@ -17737,7 +17749,14 @@
+         if (sec[si].Characteristics & IMAGE_SCN_MEM_WRITE) prot |= PROT_WRITE;
+         ERR("iOS: eager JIT-copy section %.8s (addr=%p size=0x%lx)\n",
+             sec[si].Name, sec_addr, (unsigned long)sec_size);
+-        mprotect_exec(sec_addr, sec_size, prot);
++        if (mprotect_exec(sec_addr, sec_size, prot))
++        {
++            int saved_errno = errno;
++            status = saved_errno == ENOMEM ? STATUS_NO_MEMORY : STATUS_ACCESS_DENIED;
++            ERR( "iOS: refusing image %s: executable section %.8s preparation failed errno=%d status=%08x\n",
++                 debugstr_us(nt_name), sec[si].Name, saved_errno, status );
++            goto done;
++        }
+     }
+     /* iOS: data sections were mapped MAP_PRIVATE + PROT_READ|PROT_WRITE
+      * (see map_file_into_view) so they're already mprotect-able. No

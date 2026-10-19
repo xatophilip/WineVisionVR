@@ -104,6 +104,17 @@ try append(launcher,"AFTER_FAILED_BEGIN_MUST_NOT_TAG_PRIOR\n")
 try restarted.snapshot(reason:"A new game continued without diagnostics")
 b=try bundle(restarted)
 check(!b.1.contains("AFTER_FAILED_BEGIN_MUST_NOT_TAG_PRIOR"),"Failed begin must clear the previous current attempt before subsequent snapshots")
+// Real OpenComposite files use CRLF. Truncation must retain complete records;
+// a secret crossing the sample boundary must not survive without its key.
+try restarted.beginAttempt(metadata:metadata("crlf-opencomposite"),prefixURL:prefix)
+let crlf = "OC_CRLF_START\r\n" + String(repeating:"ordinary OC record\r\n",count:2000)
+    + "password=" + String(repeating:"PRIVATEPART",count:10000) + "\r\nOC_CRLF_END\r\n"
+try Data(crlf.utf8).write(to:oc,options:.atomic)
+try restarted.finish(outcome:.failed,reason:"CRLF fatal-log capture")
+b=try bundle(restarted);text=logs(attempts(b.0).last!)
+check(text.contains("OC_CRLF_START") && text.contains("OC_CRLF_END"),"CRLF head and tail must not be discarded")
+check(!text.contains("PRIVATEPART"),"CRLF partial secret line must be dropped at sample boundaries")
+check(text.utf8.count < 300000,"CRLF retention remains bounded")
 // Retention and total bundle bounds survive many attempts with large text files.
 for n in 0..<23 {
     try restarted.beginAttempt(metadata:metadata("retained-\(n)"),prefixURL:prefix)

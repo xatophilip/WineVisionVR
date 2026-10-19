@@ -1,5 +1,9 @@
 # Windows VR implementation status
 
+Pending source repairs for the latest Lab and Fantastic Contraption failures are
+tracked in [the 19 October failure review](windows-vr-failure-review-2026-10-19.md).
+They pass targeted local checks but are not installed or headset-verified.
+
 ## Queue-fix headset retest (2026-10-19)
 
 The signed r19 build from 96426dea64f2ab347467fed69d812df3baee0418 installs

@@ -661,12 +661,7 @@ final class LauncherModel {
             let options = SteamLocalAppInfo.launchOptions(appID: game.id, game: game, drive: MadeiraDock.drive)
                 ?? SteamLibraryModel.shared.games.first(where: { $0.id == game.id })?.game.launches ?? []
             let option = options.first(where: { $0.index == launchOption })
-            let type = option?.type.lowercased()
-            let mode: WindowsPresentationMode
-            switch type {
-            case "vr", "othervr", nil: mode = .immersiveVR
-            default: mode = .desktop
-            }
+            let mode = Self.steamPresentationMode(appID: game.id, optionType: option?.type)
             let selected = try WindowsGameManifest(id: "steam.shared", title: game.name,
                 executableRelativePath: "AVPPlaySteam/dockhost.exe", backend: .windowsWineFEX,
                 graphics: .direct3D11, launchArguments: [],
@@ -687,6 +682,15 @@ final class LauncherModel {
             rememberSteamLaunchOption(launchOption, for: game)
             launchError = nil
         } catch { showImportError(error) }
+    }
+
+    nonisolated static func steamPresentationMode(appID: Int, optionType: String?) -> WindowsPresentationMode {
+        // This DOSBox title is flat even when Steam omits the launch type.
+        if appID == SteamDOSBoxCompatibility.appID { return .desktop }
+        switch optionType?.lowercased() {
+        case "vr", "othervr", nil: return .immersiveVR
+        default: return .desktop
+        }
     }
 
     /// The layer a game's Direct3D swapchain presents into. DXMT aborts the game ("Failed to create

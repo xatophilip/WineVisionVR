@@ -8,6 +8,8 @@ struct GuestSessionHealth: Sendable {
         case rendering
         case guestExit(UInt32)
         case repeatedFault
+        case compatibilityDialog
+        case rendererInitialization
     }
     enum Notice: Equatable, Sendable {
         case noFrames, stalledFrames, reportedFailure(Failure)
@@ -20,6 +22,8 @@ struct GuestSessionHealth: Sendable {
             switch self {
             case .noFrames: return L("Still waiting for the game", "Warte weiterhin auf das Spiel")
             case .stalledFrames: return L("The game is not sending new VR frames", "Das Spiel sendet keine neuen VR-Bilder")
+            case .reportedFailure(.compatibilityDialog): return L("The game stopped on a compatibility error", "Das Spiel wurde durch einen Kompatibilitätsfehler angehalten")
+            case .reportedFailure(.rendererInitialization): return L("The game could not initialize its renderer", "Das Spiel konnte seinen Renderer nicht initialisieren")
             case .reportedFailure(.rendering): return L("VR rendering reported an error", "Das VR-Rendering meldet einen Fehler")
             case .reportedFailure(.guestExit): return L("The game ended with an error", "Das Spiel wurde mit einem Fehler beendet")
             case .reportedFailure(.repeatedFault): return L("The runtime reported a fatal error", "Die Laufzeit meldet einen schwerwiegenden Fehler")
@@ -33,6 +37,12 @@ struct GuestSessionHealth: Sendable {
             case .stalledFrames:
                 return L("No new VR frame has been observed for 45 seconds. Loading, a game pause or an error may be responsible; this does not confirm a crash.",
                          "Seit 45 Sekunden wurde kein neues VR-Bild empfangen. Laden, eine Spielpause oder ein Fehler kann die Ursache sein; ein Absturz ist damit nicht bestätigt.")
+            case .reportedFailure(.compatibilityDialog):
+                return L("OpenComposite opened a fatal error dialog inside Windows. The game cannot continue loading. End the session and reopen the app to retry; its logs are saved.",
+                         "OpenComposite hat in Windows einen schwerwiegenden Fehlerdialog geöffnet. Das Spiel kann nicht weiterladen. Beende die Sitzung und öffne die App erneut; die Protokolle wurden gespeichert.")
+            case .reportedFailure(.rendererInitialization):
+                return L("The Windows game opened a fatal RenderDeviceMgr001 initialization dialog. Loading cannot continue. End the session; its logs are saved for diagnosis.",
+                         "Das Windows-Spiel hat einen schwerwiegenden RenderDeviceMgr001-Initialisierungsdialog geöffnet. Das Laden kann nicht fortgesetzt werden. Beende die Sitzung; die Protokolle wurden zur Diagnose gespeichert.")
             case .reportedFailure(.guestExit(let code)):
                 return L("The current game reported exit code \(code). End this session, then close and reopen the app to try again. Its logs are saved.",
                          "Das aktuelle Spiel meldete den Exit-Code \(code). Beende diese Sitzung und öffne die App erneut, um es noch einmal zu versuchen. Die Protokolle wurden gespeichert.")
@@ -174,7 +184,16 @@ actor GuestSessionLogMonitor {
                    let thread = UInt32(parts[1], radix: 16) {
                     gameThreads.insert(String(thread, radix: 16))
                 }
-                if line.contains("[redeliv] terminating process") {
+                // Exact runtime window-title evidence, after this native process and
+                // current game have been identified. A generic OC warning is not fatal.
+                if !gameThreads.isEmpty, line.hasPrefix("[win-name] "),
+                   line.contains("text=\"OpenComposite Error - info in log\"") {
+                    failure = .compatibilityDialog
+                } else if !gameThreads.isEmpty, line.hasPrefix("[win-name] "),
+                          line.contains("text=\"CAppSystemDict::LoadSystemAndDependencies():"),
+                          line.contains("Error in Connect() of interface 'RenderDeviceMgr001'!") {
+                    failure = .rendererInitialization
+                } else if line.contains("[redeliv] terminating process") {
                     failure = .repeatedFault
                 } else if line.contains("Cannot create DX texture swap chain: err ") {
                     failure = .rendering

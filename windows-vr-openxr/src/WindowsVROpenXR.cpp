@@ -1873,36 +1873,58 @@ XrResult XRAPI_CALL GetActionStateFloat(XrSession h,const XrActionStateGetInfo*i
 XrResult XRAPI_CALL GetActionStateVector2f(XrSession h,const XrActionStateGetInfo*info,XrActionStateVector2f*out){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!out||out->type!=XR_TYPE_ACTION_STATE_VECTOR2F)return XR_ERROR_VALIDATION_FAILURE;Action*a;ActionValue v{};bool active;XrResult result=GetActionSnapshot(s,info,XR_ACTION_TYPE_VECTOR2F_INPUT,a,v,active);if(XR_FAILED(result))return result;out->currentState=active?v.vector:XrVector2f{0,0};out->changedSinceLastSync=active&&v.changed;out->lastChangeTime=v.lastChangeTime;out->isActive=active;return XR_SUCCESS;}
 XrResult XRAPI_CALL GetActionStatePose(XrSession h,const XrActionStateGetInfo*info,XrActionStatePose*out){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!out||out->type!=XR_TYPE_ACTION_STATE_POSE)return XR_ERROR_VALIDATION_FAILURE;Action*a;ActionValue v{};bool active;XrResult result=GetActionSnapshot(s,info,XR_ACTION_TYPE_POSE_INPUT,a,v,active);if(XR_FAILED(result))return result;out->isActive=active&&v.boolean;return XR_SUCCESS;}
 XrResult XRAPI_CALL EnumerateBoundSourcesForAction(XrSession h,const XrBoundSourcesForActionEnumerateInfo*info,uint32_t capacity,uint32_t*count,XrPath*out){auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO||!count)return XR_ERROR_VALIDATION_FAILURE;auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;*count=static_cast<uint32_t>(a->bindingPaths.size());if(capacity==0)return XR_SUCCESS;if(capacity<*count)return XR_ERROR_SIZE_INSUFFICIENT;if(*count&&!out)return XR_ERROR_VALIDATION_FAILURE;std::copy(a->bindingPaths.begin(),a->bindingPaths.end(),out);return XR_SUCCESS;}
+enum HapticTracePhase : size_t { HapticHandle, HapticStructure, HapticActionType,
+    HapticSubaction, HapticVibration, HapticFocus, HapticBridge, HapticPhaseCount };
+XrResult HapticResult(bool stop, HapticTracePhase phase, XrResult result, int64_t detail=0) {
+  if(result==XR_SUCCESS)return result;
+  // Count only exceptional results, separately per operation and failure phase.
+  static std::atomic<uint32_t> counts[2][HapticPhaseCount]{};
+  const uint32_t count=++counts[stop?1:0][phase];
+  if(count<=8||(count&511u)==0){
+    static constexpr const char* phases[]={"handle","structure","action-type","subaction","vibration","focus","bridge"};
+    char line[256];std::snprintf(line,sizeof(line),"[WVR OpenXR] haptic-%s phase=%s result=%d detail=%lld count=%u\n",
+        stop?"stop":"apply",phases[phase],static_cast<int>(result),static_cast<long long>(detail),count);
+    TraceLine(line);
+  }
+  return result;
+}
+
 XrResult XRAPI_CALL ApplyHapticFeedback(XrSession h,const XrHapticActionInfo*info,const XrHapticBaseHeader*feedback){
-  auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;
-  if(!info||info->type!=XR_TYPE_HAPTIC_ACTION_INFO||!feedback||feedback->type!=XR_TYPE_HAPTIC_VIBRATION)return XR_ERROR_VALIDATION_FAILURE;
-  auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;if(a->type!=XR_ACTION_TYPE_VIBRATION_OUTPUT)return XR_ERROR_ACTION_TYPE_MISMATCH;
-  if(info->subactionPath!=XR_NULL_PATH&&std::find(a->subactionPaths.begin(),a->subactionPaths.end(),info->subactionPath)==a->subactionPaths.end())return XR_ERROR_PATH_UNSUPPORTED;
+  auto*s=GetSession(h);if(!s)return HapticResult(false,HapticHandle,XR_ERROR_HANDLE_INVALID);
+  if(!info||info->type!=XR_TYPE_HAPTIC_ACTION_INFO||!feedback||feedback->type!=XR_TYPE_HAPTIC_VIBRATION)return HapticResult(false,HapticStructure,XR_ERROR_VALIDATION_FAILURE);
+  auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return HapticResult(false,HapticHandle,XR_ERROR_HANDLE_INVALID);if(a->type!=XR_ACTION_TYPE_VIBRATION_OUTPUT)return HapticResult(false,HapticActionType,XR_ERROR_ACTION_TYPE_MISMATCH);
+  if(info->subactionPath!=XR_NULL_PATH&&std::find(a->subactionPaths.begin(),a->subactionPaths.end(),info->subactionPath)==a->subactionPaths.end())return HapticResult(false,HapticSubaction,XR_ERROR_PATH_UNSUPPORTED);
   const auto*vibration=reinterpret_cast<const XrHapticVibration*>(feedback);
   if(!std::isfinite(vibration->amplitude)||vibration->amplitude<0.0f||vibration->amplitude>1.0f||
       (vibration->duration<0&&vibration->duration!=XR_MIN_HAPTIC_DURATION)||
-      !std::isfinite(vibration->frequency)||(vibration->frequency!=XR_FREQUENCY_UNSPECIFIED&&vibration->frequency<=0.0f))return XR_ERROR_VALIDATION_FAILURE;
-  bool submitted=false;
+      !std::isfinite(vibration->frequency)||(vibration->frequency!=XR_FREQUENCY_UNSPECIFIED&&vibration->frequency<=0.0f))return HapticResult(false,HapticVibration,XR_ERROR_VALIDATION_FAILURE,vibration->duration);
+  // OpenXR haptics must not produce output while this session is unfocused.
+  if(s->state!=XR_SESSION_STATE_FOCUSED)return HapticResult(false,HapticFocus,XR_SESSION_NOT_FOCUSED);
   for(uint32_t role:{kControllerLeft,kControllerRight}){
     if(info->subactionPath!=XR_NULL_PATH&&RoleForPath(s->instance,info->subactionPath)!=role)continue;
     if(!ActionAllowsRole(a,role)||!ActionHasBindingForRole(a,role))continue;
     WVRDXMTHapticV1 request{};request.role=role;request.amplitude=vibration->amplitude;request.frequencyHz=vibration->frequency;
     request.durationSeconds=vibration->duration==XR_MIN_HAPTIC_DURATION?0.05f:std::min(static_cast<float>(vibration->duration/1.0e9),5.0f);
-    if(FAILED(SubmitSessionHaptic(s, &request)))return XR_ERROR_RUNTIME_FAILURE;submitted=true;
+    const auto result=SubmitSessionHaptic(s, &request);
+    if(FAILED(result))return HapticResult(false,HapticBridge,XR_ERROR_RUNTIME_FAILURE,result);
   }
-  return submitted?XR_SUCCESS:XR_ERROR_PATH_UNSUPPORTED;
+  // A valid output action may have no currently bound haptic device.
+  return XR_SUCCESS;
 }
 XrResult XRAPI_CALL StopHapticFeedback(XrSession h,const XrHapticActionInfo*info){
-  auto*s=GetSession(h);if(!s)return XR_ERROR_HANDLE_INVALID;if(!info||info->type!=XR_TYPE_HAPTIC_ACTION_INFO)return XR_ERROR_VALIDATION_FAILURE;
-  auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return XR_ERROR_HANDLE_INVALID;if(a->type!=XR_ACTION_TYPE_VIBRATION_OUTPUT)return XR_ERROR_ACTION_TYPE_MISMATCH;
-  if(info->subactionPath!=XR_NULL_PATH&&std::find(a->subactionPaths.begin(),a->subactionPaths.end(),info->subactionPath)==a->subactionPaths.end())return XR_ERROR_PATH_UNSUPPORTED;
-  bool submitted=false;
+  auto*s=GetSession(h);if(!s)return HapticResult(true,HapticHandle,XR_ERROR_HANDLE_INVALID);if(!info||info->type!=XR_TYPE_HAPTIC_ACTION_INFO)return HapticResult(true,HapticStructure,XR_ERROR_VALIDATION_FAILURE);
+  auto*a=GetAction(info->action);if(!a||a->set->instance!=s->instance)return HapticResult(true,HapticHandle,XR_ERROR_HANDLE_INVALID);if(a->type!=XR_ACTION_TYPE_VIBRATION_OUTPUT)return HapticResult(true,HapticActionType,XR_ERROR_ACTION_TYPE_MISMATCH);
+  if(info->subactionPath!=XR_NULL_PATH&&std::find(a->subactionPaths.begin(),a->subactionPaths.end(),info->subactionPath)==a->subactionPaths.end())return HapticResult(true,HapticSubaction,XR_ERROR_PATH_UNSUPPORTED);
+  // OpenXR haptics must not produce output while this session is unfocused.
+  if(s->state!=XR_SESSION_STATE_FOCUSED)return HapticResult(true,HapticFocus,XR_SESSION_NOT_FOCUSED);
   for(uint32_t role:{kControllerLeft,kControllerRight}){
     if(info->subactionPath!=XR_NULL_PATH&&RoleForPath(s->instance,info->subactionPath)!=role)continue;
     if(!ActionAllowsRole(a,role)||!ActionHasBindingForRole(a,role))continue;
-    WVRDXMTHapticV1 request{};request.role=role;if(FAILED(SubmitSessionHaptic(s, &request)))return XR_ERROR_RUNTIME_FAILURE;submitted=true;
+    WVRDXMTHapticV1 request{};request.role=role;const auto result=SubmitSessionHaptic(s, &request);
+    if(FAILED(result))return HapticResult(true,HapticBridge,XR_ERROR_RUNTIME_FAILURE,result);
   }
-  return submitted?XR_SUCCESS:XR_ERROR_PATH_UNSUPPORTED;
+  // A valid output action may have no currently bound haptic device.
+  return XR_SUCCESS;
 }
 
 XrResult XRAPI_CALL EnumerateEnvironmentBlendModes(XrInstance h,XrSystemId sys,XrViewConfigurationType type,uint32_t cap,uint32_t*count,XrEnvironmentBlendMode*out){auto*p=GetInstance(h);if(!p||sys!=p->system)return XR_ERROR_SYSTEM_INVALID;if(type!=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;const XrEnvironmentBlendMode mode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;return EnumerateOne(&mode,cap,count,out,sizeof(mode));}
