@@ -4,12 +4,18 @@
 
 Signed r19 from 96426dea64f2ab347467fed69d812df3baee0418 is installed.
 
+On 19 October the user explicitly confirms **Space Pirate Trainer, Tilt Brush,
+Windlands and Job Simulator all PASS** on the current headset build. This
+supersedes Space Pirate Trainer's earlier provisional report. These are
+user-confirmed compatibility results, not measured FPS or long-session guarantees.
+
 | Game | Latest result |
 |---|---|
 | Tilt Brush (Steam 327140) | User-confirmed PASS after drawing and slow head turns; user compares it with Windlands. No sampled acquisition starvation in 135.3 active seconds. Longer stability is unverified. |
 | Windlands (Steam 428370) | User-confirmed PASS in a fresh r19 process; first positive sampled frame counter within 14.9 seconds of runtime acceptance. |
 | Job Simulator (Steam 448280) | User reconfirms PASS; no fresh automated Job Simulator launch capture in this round. |
-| The Lab (Steam 450390) | Current test in progress. |
+| Space Pirate Trainer (Steam 418650) | User-confirmed PASS on the current build; supersedes the earlier provisional report. No fresh automated launch capture in this round. |
+| The Lab (Steam 450390) | FAIL / stalled after briefly rendering with sound. Original PID 856 is blocked on an OpenComposite fatal dialog in TriggerHaptic; exact OpenXR result is not yet recovered. |
 
 The first r19 cube launch stalls before graphics submission; a fresh retry passes stereo rendering near 90 new frames/s. This intermittent startup failure remains unresolved. Other games retain their previous status unless explicitly retested. See windows-vr-status.md and windows-startup-performance.md for the evidence and limits.
 
@@ -33,7 +39,7 @@ Working means user-confirmed gameplay on the tested setup; it does not establish
 long-session stability or a sustained FPS result. The earlier failures below
 are a chronological investigation record and do not supersede these latest
 Windlands and Job Simulator confirmations; the newer Space Pirate Trainer
-qualification remains authoritative.
+qualification was authoritative at that checkpoint; the 19 October PASS above supersedes it.
 
 ## Fresh-source integration retest
 

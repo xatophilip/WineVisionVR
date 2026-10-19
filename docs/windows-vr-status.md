@@ -25,7 +25,23 @@ Windlands is user-confirmed PASS in fresh PID 819. Its first positive sampled
 frame counter arrives 14.856 seconds after runtime acceptance; menu appearance
 time is not independently measured. The user also reconfirms Job Simulator as a
 pass, but no fresh automated Job Simulator launch was captured in this round.
-The Lab test is now in progress.
+The user subsequently explicitly confirms **Space Pirate Trainer, Tilt Brush,
+Windlands and Job Simulator all PASS** on the current build. Space Pirate
+Trainer's current PASS supersedes its older provisional result. Space Pirate
+Trainer and Job Simulator have no fresh automated launch capture in this round;
+their results are user-confirmed, without a new FPS or long-session claim.
+
+The Lab fails this test: PID 856 briefly renders with sound, then stops sending
+frames. Its captured counters stop at 677 submitted / 641 acquired, with an
+empty queue and all 3,844 guest GPU commands complete, so this differs from the
+previous Tilt Brush queue starvation. The runtime records a hidden
+"OpenComposite Error - info in log" modal dialog; its static text identifies
+BaseInput.cpp:2293 TriggerHaptic. The exact failing OpenXR result is still
+unconfirmed. Six geometry stream-output errors precede the dialog, but causality
+is not established. The stalled process was explicitly stopped after preserving
+launcher/runtime logs. A later OpenComposite capture belongs to a newer session
+and cannot establish the original failure code. No haptic guard bypass or fix
+has been applied or tested.
 
 The explicit real signal diagnostic passes. The first cold cube run (PID 716)
 stalls before any graphics submission, during OpenComposite session recreation;
