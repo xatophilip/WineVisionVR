@@ -33,7 +33,7 @@ final class JITCoordinator {
         guard let scriptURL = Bundle.main.url(forResource: "madeira-jit", withExtension: "js") else {
             throw Failure.scriptMissing
         }
-        let script = try Data(contentsOf: scriptURL)
+        let script = MadeiraDebuggerScript.compose(upstream: try Data(contentsOf: scriptURL))
         var components = URLComponents()
         components.scheme = scheme
         components.host = "enable-jit"

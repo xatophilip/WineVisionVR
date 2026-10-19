@@ -16,7 +16,8 @@ enum SteamDOSBoxCompatibility {
     output=surface
     autolock=false
     [render]
-    scaler=normal2x
+    # The host scales the flat display; avoid a second CPU pixel-scaling pass.
+    scaler=none
     [glide]
     glide=false
     [ne2000]

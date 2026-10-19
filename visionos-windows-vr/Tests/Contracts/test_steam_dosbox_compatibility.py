@@ -53,7 +53,7 @@ let manifest = root.appendingPathComponent("Steam/steamapps/appmanifest_224960.a
 try write(manifest, "owned appmanifest fixture; never modify")
 let manifestBefore = try Data(contentsOf: manifest)
 let expectedArguments = "-conf \"C:\\AVPPlaySteam\\Compatibility\\224960\\software.conf\" -noautoexec -c \"mount C .\" -c \"imgmount d GAME.DAT -t iso -fs iso\" -c \"C:\" -c \"cd TOMBRAID\" -c \"TOMBNO~1.EXE\""
-let expectedSettings = "[sdl]\nfullscreen=false\noutput=surface\nautolock=false\n[render]\nscaler=normal2x\n[glide]\nglide=false\n[ne2000]\nne2000=false\n"
+let expectedSettings = "[sdl]\nfullscreen=false\noutput=surface\nautolock=false\n[render]\n# The host scales the flat display; avoid a second CPU pixel-scaling pass.\nscaler=none\n[glide]\nglide=false\n[ne2000]\nne2000=false\n"
 let settings = root.appendingPathComponent("AVPPlaySteam/Compatibility/224960/software.conf")
 let option = SteamLaunchOption(executable: "DOSBox.exe", index: 1)
 for executable in ["DOSBox.exe", "dosbox.exe", ".\\DOSBox.exe", "./dosbox.exe"] {

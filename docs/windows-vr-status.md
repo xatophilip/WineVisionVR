@@ -1,5 +1,18 @@
 # Windows VR implementation status
 
+## Startup performance follow-up (2026-10-19)
+
+The user confirms Windlands works in r15b after a long startup, and The Lab also
+runs but takes too long to appear. The user clarifies startup time is the main
+complaint. The Lab's sampled post-load frame rates do not establish loading speed.
+The startup fix candidate corrects a rejected pre-attach debugger policy request;
+its 36 production Swift/actual JavaScript contract comparisons pass. A separate
+Tomb Raider profile removes optional CPU software scaling; its actual Swift and
+pinned Wine argument-parser contracts pass. No core/cycle guesses are added.
+Signed build and physical startup comparisons remain pending. See
+[the measured baseline and exact scope](windows-startup-performance.md).
+
+
 ## Stock 32-bit crypto defaults repair (2026-10-18)
 
 A subsequent user reply reports Tilt Brush as blank, loading or closed despite
