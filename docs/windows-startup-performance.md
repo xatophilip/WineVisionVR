@@ -47,7 +47,7 @@ The later installed combined package from `a08e0a25126dc831b696b4515ad0027a658f9
 
 Fresh Windlands PID 611 accepts runtime launch at 18:56:10.452, with 65 submitted frames sampled at 18:56:25.353 (14.901 s), 320 at 18:56:30.364 and 1,636 at 18:56:50.387. The user confirms the menu/game is visible. The old roughly 54-second gap does not appear. Do not report this as an exact 15-second menu load: it is the upper bound for the first positive sampled frame counter. The r16 reference had two loading frames around 30 s and sustained game rendering around 90 s. This is one comparative run, without repeated cold/warm cache controls.
 
-Tilt Brush reaches Standard and paints according to the user, but its display handoff remains jerky despite ongoing guest completion. In one five-second window, 222 guest frames complete and no new frames are acquired for display. The three-slot queue stays full and frames are dropped. A queue-overflow/readiness issue is under investigation; this installed package does not include that proposed repair. User-reported wraparound behavior is also unresolved.
+Tilt Brush reaches Standard and paints according to the user, but its display handoff remains jerky despite ongoing guest completion. In one five-second window, submissions and actual GPU-command completions continue but no new frames are acquired for display. Compositor completedFrames counts consumer ticket retirement, including dropped frames, rather than producer GPU readiness. The three-slot queue stays full and frames are dropped. A queue-overflow/readiness issue is under investigation; this installed package does not include that proposed repair. User-reported wraparound behavior is also unresolved.
 
 Raw successful and failed command receipts and logs remain in `/Volumes/XRDev/build/WineVisionVR/headset-oct19-r18-retest`. Only successful nonempty captures support these measurements.
 
@@ -66,3 +66,11 @@ python3 windows-vr-tools/test_compositor_backpressure.py --build /path/to/fresh/
 ```
 
 The runner can accept an immutable prior bridge source with `--baseline-source` to verify the expected original failure. Captured evidence is under `/Volumes/XRDev/build/WineVisionVR/compositor-backpressure-oct19/reviewed-contract/result.json`. Production bridge syntax/type checking against the actual visionOS 27 SDK also passes (`reviewed-contract/visionos-syntax-result.json`). These checks establish the queue repair locally; they do not prove headset frame rate or resolve the user-reported missing scene when turning the head. The installed r18 app does not yet contain the queue patch.
+
+## Physical r19 queue-fix result
+
+The exact new bridge is installed and tested. The user marks Tilt Brush PASS after the drawing/head-turn check, comparing it favorably with Windlands. In 135.271 seconds of active sampled windows, 4,430 frames are submitted and 4,422 acquired, with four additional drops and zero captured GPU failure increments. No active interval has zero acquisitions despite producer/GPU progress. At similar 52–57 ms GPU queue delays to the old failing workload, three windows totaling 15.034 seconds acquire 645 frames (about 42.9/s) with zero additional drops.
+
+The longer r18 baseline includes 150.322 seconds of zero-acquisition starvation windows, with a longest consecutive captured stall of 30.066 seconds; it also has long smooth periods. This supports the targeted queue repair, not an increase in peak game FPS or proof of indefinite stability. Rate calculations exclude lifecycle crossings and distinguish consumer-ticket retirement from actual GPU-command completions. Raw/cropped evidence and analysis receipts are under headset-oct19-r19-retest/tilt/current804-analysis.
+
+Windlands also receives a user PASS in a fresh r19 process. The first sampled positive frame counter is within 14.856 seconds of runtime acceptance. The initial r19 cube startup stalls before graphics submission; a fresh retry passes near 90 new frames/s. That intermittent pre-submit startup issue remains unresolved.

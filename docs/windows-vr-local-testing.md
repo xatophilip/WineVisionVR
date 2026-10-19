@@ -1,6 +1,19 @@
 # Local correctness and performance workflow
 
-## Current game status — 17 October 2026
+## Current headset retest — 19 October 2026
+
+Signed r19 from 96426dea64f2ab347467fed69d812df3baee0418 is installed.
+
+| Game | Latest result |
+|---|---|
+| Tilt Brush (Steam 327140) | User-confirmed PASS after drawing and slow head turns; user compares it with Windlands. No sampled acquisition starvation in 135.3 active seconds. Longer stability is unverified. |
+| Windlands (Steam 428370) | User-confirmed PASS in a fresh r19 process; first positive sampled frame counter within 14.9 seconds of runtime acceptance. |
+| Job Simulator (Steam 448280) | User reconfirms PASS; no fresh automated Job Simulator launch capture in this round. |
+| The Lab (Steam 450390) | Current test in progress. |
+
+The first r19 cube launch stalls before graphics submission; a fresh retry passes stereo rendering near 90 new frames/s. This intermittent startup failure remains unresolved. Other games retain their previous status unless explicitly retested. See windows-vr-status.md and windows-startup-performance.md for the evidence and limits.
+
+## Previous game status — 17 October 2026
 
 The user reconfirmed **Windlands and Job Simulator both work** on 17 October
 2026, on the physical M2 Apple Vision Pro running visionOS 27.2 with PS VR2

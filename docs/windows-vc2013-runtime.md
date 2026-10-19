@@ -60,3 +60,7 @@ The initial r18 installation attempt fails when the headset becomes unreachable.
 The exact r18 package subsequently installs on Vision Pro. Tilt Brush reaches Unity Standard, and the user confirms it paints. The successful current Unity capture (`headset-oct19-r18-retest/tilt-unity-1.txt`, SHA-256 `1c117a3e39d78cc01f0d446e6b4749d6daaed63775fb86d1e3ef1a03007573e9`) does not show the previous TiltBrushCpp/DllNotFound/null-exception cascade. Full native loader captures in this retest fail or end before the decisive plugin load, so no uncaptured loader success line is claimed.
 
 The user reports jerkiness and a wraparound issue. Rendering counters independently show frame-handoff starvation while the game continues completing frames; this remains separate from the CRT repair. Drawing functionality is confirmed, but smoothness, prolonged stability and wraparound correctness are not.
+
+## Follow-up queue build
+
+The r19 wrapper-only build retains every r18 guest runtime/resource byte and receipt, including both ARM64EC VC2013 DLLs. The user confirms Tilt Brush drawing and head-turn behavior as a PASS after the compositor queue repair. This distinguishes the working plugin/runtime closure from the separate presentation-starvation fix. Featured online sketches still produce HTTP 502 errors in the captured Unity log; that is not treated as a native plugin failure or a confirmation that online features work.

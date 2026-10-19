@@ -1,5 +1,43 @@
 # Windows VR implementation status
 
+## Queue-fix headset retest (2026-10-19)
+
+The signed r19 build from 96426dea64f2ab347467fed69d812df3baee0418 installs
+successfully. Its changed native compositor is freshly compiled and linked;
+the vendor runtime remains A and guest resources remain E/r18. Independent
+package review confirms all 1,123 paths and all resource bytes/receipts are retained.
+Package audit SHA-256: 49f5053ac334ffb75d1ea6a819b686eba16c41f9bcc0089cf5e120869d54596a.
+App UUID: 10913E55-C9A4-371D-8AE1-9D0B4C34A307; native bridge UUID:
+B286B761-2912-30BD-857B-50A77A0BDD19.
+
+**Tilt Brush is user-confirmed PASS**: after being asked to draw and slowly turn
+their head, the user reports it works as well as Windlands. The PID 804 capture
+contains 135.271 seconds of valid active sample windows with 4,430 submissions,
+4,422 acquisitions and four additional drops; there are no zero-acquisition
+starvation windows or GPU-command failure increments. During 15.034 seconds
+with 52–57 ms GPU queue delays, it acquires about 42.9 frames/s with zero
+additional drops. This is a shorter test than the prior 16-minute baseline,
+not a long-session reliability guarantee. Lifecycle/Return-to-VR crossings are
+excluded from the rate comparison. Consumer ticket retirement is kept separate
+from actual GPU-command completion.
+
+Windlands is user-confirmed PASS in fresh PID 819. Its first positive sampled
+frame counter arrives 14.856 seconds after runtime acceptance; menu appearance
+time is not independently measured. The user also reconfirms Job Simulator as a
+pass, but no fresh automated Job Simulator launch was captured in this round.
+The Lab test is now in progress.
+
+The explicit real signal diagnostic passes. The first cold cube run (PID 716)
+stalls before any graphics submission, during OpenComposite session recreation;
+a precise deadlock cause is not proven. A fresh retry (PID 752) renders both eyes
+at about 89.8 new frames/s with zero captured GPU failures. The initial stall is
+retained as an unresolved intermittent startup issue, not erased by the retry.
+
+Local evidence: render-queue-oct19-r19/verified-app-complete.json,
+package-peer-review.json, and headset-oct19-r19-retest/. The bounded current
+Tilt Brush analysis is in tilt/current804-analysis/ and binds the raw log hash,
+PID marker, crop offset and excluded lifecycle intervals.
+
 ## Startup performance follow-up (2026-10-19)
 
 The later physical r18 retest succeeds after the developer connection is restored.
@@ -22,8 +60,8 @@ loading frames around 30 s and sustained rendering around 90 s.
 Tilt Brush reaches Unity `Standard`; the user confirms it paints, but reports
 jerkiness and that it does not wrap around properly. The captured Unity log has
 no previous native-plugin/DllNotFound exception cascade. Its render counters
-show an unresolved frame-handoff problem: from 18:59:25 to 18:59:30 the game
-completes another 222 frames while the display acquires zero, with three queued
+show an unresolved frame-handoff problem: from 18:59:25 to 18:59:30 submissions and actual GPU-command completions
+continue while the display acquires zero, with three queued
 frames, increasing drops and zero GPU failures. This is not a smooth/stable
 painting pass. The user clarifies the scene is cut off or missing when turning their head.
 Stale-frame reprojection is a plausible contributor; projection correctness has
